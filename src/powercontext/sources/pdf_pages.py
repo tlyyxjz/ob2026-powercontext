@@ -274,12 +274,34 @@ class _PageQueryTerms:
         which who why will with year any define defined using use according reported""".split()
     )
     _EXPANSIONS = {
+        # Standard accounting wording, not document-specific facts: a 10-K states
+        # "capital expenditures" where a question says "capex", and a statement page
+        # never prints the ratio name the question uses.
         "capex": ("capital", "expenditures"),
         "ebitda": ("operating", "income", "depreciation", "amortization"),
         "geographies": ("geographic", "geography", "region", "regions", "worldwide", "international", "global"),
         "battles": ("proceedings", "litigation", "contingencies"),
-        "margin": ("operating", "profit"),
+        "margin": ("operating", "profit", "gross"),
         "restructuring": ("charges", "costs"),
+        "revenue": ("sales", "net"),
+        "earnings": ("income", "profit"),
+        "profit": ("income", "earnings"),
+        "debt": ("borrowings", "obligations", "long", "term"),
+        "inventory": ("inventories",),
+        "dividend": ("dividends", "per", "share"),
+        "repurchase": ("buyback", "shares"),
+        "headcount": ("employees",),
+        "segment": ("segments", "reportable"),
+        "litigation": ("legal", "proceedings"),
+        "lease": ("leases", "rent"),
+        "goodwill": ("impairment",),
+        "impairment": ("goodwill", "charges"),
+        "cashflow": ("cash", "flow", "operating", "activities"),
+        "liquidity": ("cash", "facilities", "working", "capital"),
+        "tariff": ("tariffs", "duties"),
+        "inflation": ("commodity", "cost", "pricing"),
+        "employees": ("headcount", "associates"),
+        "cybersecurity": ("security", "incidents", "privacy"),
     }
 
     def __call__(self, question: str) -> tuple[str, ...]:
