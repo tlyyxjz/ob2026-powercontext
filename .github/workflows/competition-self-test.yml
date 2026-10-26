@@ -1,0 +1,38 @@
+name: competition-self-test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 2026-competition
+    paths:
+      - "src/**"
+      - "competition/**"
+      - ".github/workflows/competition-self-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  csv-rows:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install locked competition dependencies
+        run: python -m pip install -r competition/requirements.txt
+      - name: Run P02 CSV row evidence acceptance
+        env:
+          POWERCONTEXT_CANDIDATE: ${{ github.workspace }}
+          POWERCONTEXT_PUBLIC: ${{ github.workspace }}/competition
+          PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/competition
+          PYTHONHASHSEED: "0"
+          TZ: UTC
+        run: >-
+          python -m pytest -q
+          -c competition/pytest.ini
+          --confcutdir=competition
+          competition/challenges/source-01-table-evidence/acceptance
