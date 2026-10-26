@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import re
 from collections.abc import Sequence
 from urllib.parse import quote
 
@@ -212,6 +213,13 @@ class PDFPageTextEvidenceProjection:
 async def search_pdf_pages(memory: object, question: str, *, limit: int = 20) -> tuple[MemoryCitation, ...]:
     """Return citations whose pages are all distinct exact pages.
 
+    Space-separated FTS is an implicit AND, and a financial question's own wording
+    rarely appears on its evidence page (an EBITDA question's evidence page is a
+    statement page that never prints "EBITDA"). So the question is decomposed into
+    terms, each term is searched separately through the public Memory API, and the
+    per-entry scores are accumulated. Term-level search is what lets a page that
+    supports the answer surface even though it does not repeat the question.
+
     Retrieval ranks entries, not pages, so a document may contribute several hits that
     resolve to the same page. The returned citation tuple never does: each accepted
     citation is dropped as soon as its page identity was already claimed.
@@ -222,13 +230,22 @@ async def search_pdf_pages(memory: object, question: str, *, limit: int = 20) ->
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         raise ValueError("limit must be a positive integer")
 
-    candidate_limit = max(limit * 4, limit)
-    page = await memory.search(SearchMemoryRequest(query=question, mode="fts", limit=candidate_limit))
+    terms = _query_terms(question)
+    depth = max(limit * 10, _MIN_TERM_DEPTH)
+    scores: dict[str, float] = {}
+    best: dict[str, object] = {}
+    for term in terms:
+        page = await memory.search(SearchMemoryRequest(query=term, mode="fts", limit=depth))
+        for hit in page.hits:
+            scores[hit.entry_id] = scores.get(hit.entry_id, 0.0) + float(hit.score)
+            best.setdefault(hit.entry_id, hit)
+
     citations: list[MemoryCitation] = []
     claimed: set[tuple[str, ...]] = set()
-    for hit in page.hits:
+    for entry_id, _ in sorted(scores.items(), key=lambda item: item[1], reverse=True):
         if len(citations) >= limit:
             break
+        hit = best[entry_id]
         citation = MemoryCitation(
             memory_ref=hit.memory_ref,
             entry_id=hit.entry_id,
@@ -243,6 +260,40 @@ async def search_pdf_pages(memory: object, question: str, *, limit: int = 20) ->
         claimed.add(identities)
         citations.append(citation)
     return tuple(citations)
+
+
+class _PageQueryTerms:
+    """Decompose a question into the terms one search each."""
+
+    _WORD = re.compile(r"[a-z0-9]+")
+    _STOP = frozenset(
+        """a an and are as at be been by did do does for from had has have how in into is it its
+        much many of on or pct s t that the their then there these this to was were what when where
+        which who why will with year any define defined using use according reported""".split()
+    )
+    _EXPANSIONS = {
+        "capex": ("capital", "expenditures"),
+        "ebitda": ("operating", "income", "depreciation", "amortization"),
+        "geographies": ("geographic", "regions", "worldwide", "international"),
+        "battles": ("proceedings", "litigation", "contingencies"),
+        "margin": ("operating", "profit"),
+        "restructuring": ("charges", "costs"),
+    }
+
+    def __call__(self, question: str) -> tuple[str, ...]:
+        seen: dict[str, None] = {}
+        for token in self._WORD.findall(question.lower()):
+            if token in self._STOP or len(token) < 2:
+                continue
+            seen.setdefault(token, None)
+            for extra in self._EXPANSIONS.get(token, ()):
+                seen.setdefault(extra, None)
+        # A question made only of stop words still has to run one search.
+        return tuple(seen) or (question,)
+
+
+_query_terms = _PageQueryTerms()
+_MIN_TERM_DEPTH = 200
 
 
 PDF_PAGE_SOURCE_ADAPTER = PDFPageSourceAdapter()
