@@ -215,6 +215,11 @@ from powercontext.builtin.runtime.models import (
     TopicMemoryFlushResult,
 )
 from powercontext.builtin.runtime.prepared_code import PreparedCodeCandidate, code_candidates
+from powercontext.builtin.runtime.source_lifecycle import (
+    SourceLifecycleApplication,
+    SourceLifecycleStore,
+    active_nodes,
+)
 from powercontext.builtin.runtime.prepared_context import (
     PreparedContextBuild,
     PreparedContextBuilder,
@@ -2688,6 +2693,17 @@ class ScopedTopicMemoryApplication:
                     embedding_timeout_seconds,
                 )
         observer = self._runtime._topic_memory_search_observer
+        hidden = await self._runtime._inactive_topic_refs(self.scope_id)
+        if hidden:
+            result = result.model_copy(
+                update={
+                    "hits": tuple(
+                        hit
+                        for hit in result.hits
+                        if (hit.artifact_ref.artifact_id, hit.artifact_ref.revision) not in hidden
+                    )
+                }
+            )
         if observer is not None:
             try:
                 observer(result.mode, used_fallback)
@@ -3033,6 +3049,7 @@ class BuiltinRuntime:
         remote_skill_distribution: RemoteSkillDistributionService | None = None,
         statistics_service: StatisticsServiceFactory | None = None,
         record_service: RecordService | None = None,
+        source_lifecycle_store: SourceLifecycleStore | None = None,
         prompt_service: PromptService | None = None,
         recall_token_estimator: RecallTokenEstimator | None = None,
         recall_effort_sink: RecallEffortSink | None = None,
@@ -3089,6 +3106,7 @@ class BuiltinRuntime:
         self._remote_skill_distribution = remote_skill_distribution
         self._statistics_service = statistics_service
         self._record_service = record_service
+        self._source_lifecycle_store = source_lifecycle_store
         self._prompt_service = prompt_service
         self._recall_token_estimator = recall_token_estimator
         self._recall_effort_sink = recall_effort_sink
@@ -3130,6 +3148,7 @@ class BuiltinRuntime:
         self.work = WorkApplication(self)
         self.memory = MemoryApplication(self)
         self.topic_memory = TopicMemoryApplication(self)
+        self.lifecycle = SourceLifecycleApplication(self)
         self.records = RecordApplication(self)
         self.prompts = PromptApplication(self)
         self.review = ReviewApplication(self)
@@ -3401,6 +3420,23 @@ class BuiltinRuntime:
 
     def _lock(self, scope_id: str) -> asyncio.Lock:
         return self._scope_cache.lock(validate_scope_id(scope_id))
+
+    async def _inactive_topic_refs(self, scope_id: str) -> frozenset[tuple[str, int]]:
+        """Return the Topic revisions that a withdrawn Source dependency hid from generation."""
+
+        store = self._source_lifecycle_store
+        if store is None:
+            return frozenset()
+        async with store.database.transaction() as connection:
+            nodes, _ = await store.load(connection, validate_scope_id(scope_id))
+        if not nodes:
+            return frozenset()
+        active = active_nodes(nodes)
+        return frozenset(
+            (node.citation.artifact_id, node.citation.revision)
+            for node in nodes
+            if node.kind == "topic" and node.node_id not in active
+        )
 
     @asynccontextmanager
     async def _locked(self, scope_id: str) -> AsyncIterator[None]:
