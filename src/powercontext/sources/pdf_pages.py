@@ -237,6 +237,8 @@ async def search_pdf_pages(memory: object, question: str, *, limit: int = 20) ->
     for term in terms:
         page = await memory.search(SearchMemoryRequest(query=term, mode="fts", limit=depth))
         for hit in page.hits:
+            # Accumulate across terms: a page that matches several question terms
+            # supports the answer better than one that matches a single term once.
             scores[hit.entry_id] = scores.get(hit.entry_id, 0.0) + float(hit.score)
             best.setdefault(hit.entry_id, hit)
 
@@ -274,7 +276,7 @@ class _PageQueryTerms:
     _EXPANSIONS = {
         "capex": ("capital", "expenditures"),
         "ebitda": ("operating", "income", "depreciation", "amortization"),
-        "geographies": ("geographic", "regions", "worldwide", "international"),
+        "geographies": ("geographic", "geography", "region", "regions", "worldwide", "international", "global"),
         "battles": ("proceedings", "litigation", "contingencies"),
         "margin": ("operating", "profit"),
         "restructuring": ("charges", "costs"),
