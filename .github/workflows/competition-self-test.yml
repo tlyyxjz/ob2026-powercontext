@@ -30,6 +30,7 @@ jobs:
           POWERCONTEXT_PUBLIC: ${{ github.workspace }}/competition
           PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/competition
           PYTHONHASHSEED: "0"
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
           TZ: UTC
         run: >-
           python -m pytest -q
