@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pyobvector import VECTOR, VectorIndex
 from sqlalchemy import (
     BigInteger,
@@ -96,6 +98,79 @@ WHERE m.scope_id = :scope_id
   AND m.memory_artifact_id IN :memory_artifact_ids
 ORDER BY l2_distance(m.embedding, :query_vector) APPROXIMATE
 LIMIT :candidate_limit
+"""
+
+# One statement for a hybrid candidate search: both channels are produced inside the
+# database and distinguished by the ``channel`` column, so the caller never issues two
+# candidate queries and merges them in application code. ``UNION ALL`` keeps a row that
+# both channels retrieve, because the shared fusion needs each channel's own rank.
+#
+# The score and the distance are mirror images of one another (equal text scores mean
+# equidistant rows), so ordering by score alone leaves ties that a repeated search could
+# resolve differently and the published query contract requires a stable answer.
+# ``entry_id`` therefore completes the text ordering, while the vector side keeps its
+# own approximate ordering: ``l2_distance(...) APPROXIMATE`` must stay adjacent to the
+# clause that ranks it for the HNSW index to answer the query.
+#
+# Each half is parenthesised because a branch of a ``UNION`` may not carry its own
+# ``ORDER BY``/``LIMIT`` unless it is wrapped. Unwrapped, the ordering is read as
+# belonging to the union itself, which then has no ``LIMIT`` of its own; the branch
+# is also what keeps the two candidate budgets separate, so a cheap text hit rate
+# cannot crowd the approximate vector scan out of a shared ``candidate_limit``.
+_OCEANBASE_HYBRID_SEARCH_SQL = """
+(SELECT 'fts' AS channel,
+    h.memory_artifact_id,
+    h.head_revision,
+    h.entry_id,
+    h.entry_version_id,
+    v.text,
+    MATCH (h.searchable_text) AGAINST (:analyzed_query) AS score,
+    l2_distance(x.embedding, :query_vector) AS distance
+FROM pc_memory_entry_heads AS h
+JOIN pc_memory_entry_versions AS v
+  ON v.scope_id = h.scope_id
+ AND v.memory_artifact_id = h.memory_artifact_id
+ AND v.entry_version_id = h.entry_version_id
+LEFT JOIN pc_memory_vector_entries AS x
+  ON x.scope_id = h.scope_id
+ AND x.memory_artifact_id = h.memory_artifact_id
+ AND x.entry_id = h.entry_id
+WHERE h.scope_id = :scope_id
+  AND h.memory_artifact_id IN :memory_artifact_ids
+  AND MATCH (h.searchable_text) AGAINST (:analyzed_query)
+ORDER BY score DESC, h.entry_id, h.entry_version_id
+LIMIT :candidate_limit)
+UNION ALL
+(SELECT 'vector' AS channel,
+    m.memory_artifact_id,
+    m.head_revision,
+    m.entry_id,
+    m.entry_version_id,
+    v.text,
+    f.score,
+    l2_distance(m.embedding, :query_vector) AS distance
+FROM pc_memory_vector_entries AS m
+JOIN pc_memory_entry_versions AS v
+  ON v.scope_id = m.scope_id
+ AND v.memory_artifact_id = m.memory_artifact_id
+ AND v.entry_version_id = m.entry_version_id
+LEFT JOIN (
+    SELECT h.scope_id,
+        h.memory_artifact_id,
+        h.entry_id,
+        MATCH (h.searchable_text) AGAINST (:analyzed_query) AS score
+    FROM pc_memory_entry_heads AS h
+    WHERE h.scope_id = :scope_id
+      AND h.memory_artifact_id IN :memory_artifact_ids
+      AND MATCH (h.searchable_text) AGAINST (:analyzed_query)
+) AS f
+  ON f.scope_id = m.scope_id
+ AND f.memory_artifact_id = m.memory_artifact_id
+ AND f.entry_id = m.entry_id
+WHERE m.scope_id = :scope_id
+  AND m.memory_artifact_id IN :memory_artifact_ids
+ORDER BY l2_distance(m.embedding, :query_vector) APPROXIMATE
+LIMIT :candidate_limit)
 """
 
 
@@ -229,6 +304,23 @@ class OceanBaseMemoryFTSIndex:
         return projections
 
 
+def _channel_rank_key(row: dict[str, Any]) -> tuple[float, str, str]:
+    """Order one channel's candidates the way the caller reads them.
+
+    Nearest first is the channel's own ranking, and a row the channel did not
+    measure (a text-only hit has no distance) follows the measured ones instead of
+    being compared as a zero. ``entry_id`` keeps equal-ranked rows in one order, so
+    a repeated search returns the same sequence.
+    """
+
+    distance = row.get("distance")
+    return (
+        float("inf") if distance is None else float(distance),
+        str(row["entry_id"]),
+        str(row["entry_version_id"]),
+    )
+
+
 class OceanBaseMemoryVectorIndex:
     """OceanBase HNSW strategy over rebuildable active-head embeddings."""
 
@@ -284,6 +376,29 @@ class OceanBaseMemoryVectorIndex:
             bindparam("tag_keys", expanding=True),
             bindparam("tag_hashes", expanding=True),
             bindparam("query_vector", type_=VECTOR(profile.dimension)),
+        )
+        self._hybrid_search_sql = text(_OCEANBASE_HYBRID_SEARCH_SQL).bindparams(
+            bindparam("memory_artifact_ids", expanding=True),
+            bindparam("query_vector", type_=VECTOR(profile.dimension)),
+        )
+        # The tag predicate can only be expressed as SQL text, so the filtered form is a
+        # separate statement with the predicate spliced into both halves of the union.
+        # Selecting an entry's vector by its head joins the two frozen tables, which
+        # keeps a tagged hybrid request as "one statement, both channels" instead of
+        # falling back to a vector-only candidate set.
+        self._tagged_hybrid_search_sql = text(
+            _OCEANBASE_HYBRID_SEARCH_SQL.replace(
+                "WHERE h.scope_id = :scope_id",
+                "WHERE h.scope_id = :scope_id" + memory_tag_sql("h"),
+            ).replace(
+                "WHERE m.scope_id = :scope_id",
+                "WHERE m.scope_id = :scope_id" + memory_tag_sql("m"),
+            )
+        ).bindparams(
+            bindparam("memory_artifact_ids", expanding=True),
+            bindparam("query_vector", type_=VECTOR(profile.dimension)),
+            bindparam("tag_keys", expanding=True),
+            bindparam("tag_hashes", expanding=True),
         )
 
     async def initialize(self, connection: AsyncConnection, /) -> None:
@@ -377,6 +492,8 @@ class OceanBaseMemoryVectorIndex:
             raise CapabilityNotSupportedError("embedding-profile")
         if not await self.vector_complete(connection, scope_id, request.memories, self.profile):
             raise CapabilityNotSupportedError("vector")
+        if request.mode == "hybrid":
+            return await self._hybrid_search(connection, scope_id, request)
         rows = (
             await connection.execute(
                 self._search_sql if request.tag_filter is None else self._tagged_search_sql,
@@ -393,6 +510,67 @@ class OceanBaseMemoryVectorIndex:
             )
         ).mappings()
         return MemorySearchChannels(vector=memory_channel_hits(rows, request.memories))
+
+    async def _hybrid_search(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        request: MemorySearchRequest,
+        /,
+    ) -> MemorySearchChannels:
+        """Return both channels from one statement.
+
+        The published contract for ``mode="hybrid"`` is exactly one candidate
+        statement that carries the full-text and the vector candidates together, so
+        the channels are split here rather than fetched by two round trips and
+        merged in application code. A tag filter narrows the same single
+        statement; returning only the vector channel would drop every lexical
+        candidate, so both channels are always reported.
+        """
+
+        rows = (
+            await connection.execute(
+                self._hybrid_search_sql if request.tag_filter is None else self._tagged_hybrid_search_sql,
+                {
+                    "scope_id": scope_id,
+                    "memory_artifact_ids": tuple(memory.artifact_id for memory in request.memories),
+                    "analyzed_query": request.analyzed_query,
+                    "query_vector": validate_embedding(
+                        request.query_vector,
+                        dimension=self.profile.dimension,
+                    ),
+                    "candidate_limit": request.candidate_limit,
+                    **memory_tag_parameters(request.tag_filter),
+                },
+            )
+        ).mappings()
+        # ``mappings()`` hands back a single-use result: the first pass drains the
+        # cursor, so splitting the channels in two independent passes left the
+        # second one with an empty set and a hybrid hit that both channels
+        # retrieved was always reported as lexical-only. Materialise the candidate
+        # set once and split it twice.
+        candidates = list(rows)
+        # Each row carries both measurements when the row is reachable from both
+        # channels, so fusion can report a candidate as matched by both. Clearing
+        # one of them made a row that both channels retrieved look single-channel,
+        # which the hybrid contract forbids.
+        #
+        # Fusion is positional, so each channel is ordered here rather than trusting
+        # the order the union happened to emit: the caller may repeat a search and
+        # must get the same answer. A text-only row has no vector distance and sorts
+        # last on that key, which is where a missing measurement belongs.
+        fts_rows = sorted(
+            (dict(row) for row in candidates if row["channel"] == "fts"),
+            key=_channel_rank_key,
+        )
+        vector_rows = sorted(
+            (dict(row) for row in candidates if row["channel"] == "vector"),
+            key=_channel_rank_key,
+        )
+        return MemorySearchChannels(
+            fts=memory_channel_hits(fts_rows, request.memories),
+            vector=memory_channel_hits(vector_rows, request.memories),
+        )
 
     async def vector_complete(
         self,

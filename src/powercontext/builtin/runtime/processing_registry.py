@@ -92,6 +92,22 @@ def canonical_processing_manifest(config: BuiltinConfig) -> dict[str, Any]:
         automatic.append(EXPERIENCE_INCUBATION_CURSOR_NAME)
     if runtime.profile_schedule_enabled:
         automatic.append(PROFILE_SOURCE_WINDOW_BINDING)
+    # A count threshold admits the same ordinary invocation a schedule does, so
+    # it carries the same stale-work responsibility: a stopped deployment may
+    # have reached its threshold without committing, and that accepted work has
+    # to survive the restart. Recording it here keeps the recovery decision in
+    # the deployment manifest instead of leaving it to whichever process
+    # happens to start first. Only the enabled families are recorded: the
+    # threshold value is policy, and changing it must not read as a different
+    # deployment that the completed manifest check would refuse to start.
+    count_admission = {
+        "memory": runtime.memory_source_count_threshold is not None,
+        "topic-memory": runtime.topic_memory_source_count_threshold is not None,
+    }
+    if count_admission["memory"]:
+        automatic.append(SOURCE_WINDOW_TRIGGER_NAME)
+    if count_admission["topic-memory"]:
+        automatic.append(TOPIC_MEMORY_SOURCE_WINDOW_BINDING)
     return {
         "mode": runtime.artifact_processing_supervisor_mode,
         "capabilities": list(processing_capabilities(config)),
@@ -102,5 +118,6 @@ def canonical_processing_manifest(config: BuiltinConfig) -> dict[str, Any]:
             PROFILE_SOURCE_WINDOW_BINDING: "profile",
             SKILL_DREAM_BINDING: "skill",
         },
-        "legacy_automatic_bindings": sorted(automatic),
+        "count_admission": count_admission,
+        "legacy_automatic_bindings": sorted(set(automatic)),
     }

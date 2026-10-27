@@ -28,6 +28,7 @@ from powercontext.builtin.artifacts.memory.models import MemoryCitation, MemoryH
 from powercontext.builtin.artifacts.profile.models import Profile
 from powercontext.builtin.artifacts.topic_memory import TopicMemory, TopicMemorySearchHit
 from powercontext.builtin.runtime.errors import PreparedContextInvariantError
+from powercontext.builtin.runtime.evidence_fragments import RankedSpan, rank_spans
 from powercontext.builtin.runtime.models import PrepareContextRequest, PreparedContext
 from powercontext.builtin.runtime.prepared_code import (
     CodeEvidenceRef,
@@ -43,6 +44,7 @@ from powercontext.builtin.runtime.prepared_text import (
 from powercontext.builtin.runtime.recall_sufficiency import RecallBudgetView
 
 _MIN_TRUNCATED_CONTENT_BYTES = 64
+_MIN_FRAGMENT_CHARS = 24
 _ELLIPSIS = "…"
 _BEGIN_MARKER = "BEGIN_POWERCONTEXT_PREPARED_CONTEXT_V1"
 _END_MARKER = "END_POWERCONTEXT_PREPARED_CONTEXT_V1"
@@ -100,12 +102,27 @@ class PreparedContextBuild:
     **not** a field here: ``ScopedContextApplication._prepare`` returns ``build.context`` and
     discards the rest, so such a field would have no production observer. The trace is
     delivered through the Runtime's optional ``RecallEffortSink`` instead.
+
+    ``fragments`` is filled only by the query-driven evidence-selection path; every fragment
+    carries the half-open character range of the exact entry text it was cut from, and
+    ``origins`` is its positional counterpart.
     """
 
     context: PreparedContext
     origins: tuple[PreparedContextOrigin, ...]
     omissions: PreparedContextOmissions = PreparedContextOmissions()
     code_origins: tuple[CodeEvidenceRef, ...] = ()
+    fragments: tuple[PreparedContextFragment, ...] = ()
+
+
+@dataclass(frozen=True)
+class PreparedContextFragment:
+    """One literal slice of a Memory entry, addressable back to the original text."""
+
+    address: MemoryEntryAddress
+    start: int
+    end: int
+    text: str
 
 
 @dataclass(frozen=True)
@@ -211,6 +228,13 @@ class PreparedContextBuilder:
         profile_candidates: Sequence[PreparedProfileCandidate] = (),
         code_candidates: Sequence[PreparedCodeCandidate] = (),
     ) -> PreparedContextBuild:
+        if request.evidence_selection:
+            return self._select_fragment_result(
+                request=request,
+                current_scope_id=current_scope_id,
+                memory_candidates=memory_candidates,
+            )
+
         if request.include_code:
 
             def historical(history_request: PrepareContextRequest, entries: int) -> PreparedContextBuild:
@@ -254,6 +278,75 @@ class PreparedContextBuilder:
             context=PreparedContext(status="ready", content=content, content_bytes=content_bytes),
             origins=origins,
             omissions=omissions,
+        )
+
+    def _select_fragment_result(
+        self,
+        *,
+        request: PrepareContextRequest,
+        current_scope_id: str | None,
+        memory_candidates: Sequence[PreparedMemoryCandidates],
+    ) -> PreparedContextBuild:
+        """Build context from query-relevant literal slices of the candidate entry texts.
+
+        Every returned slice is a half-open character range of the stored entry text, so a
+        caller can re-read the original through its citation. The byte budget is measured on
+        the complete rendered envelope, never on the slice text alone.
+        """
+
+        owners: list[tuple[str, ArtifactRef, str, str]] = []
+        texts: list[str] = []
+        seen: set[tuple[str, str, str]] = set()
+        for candidates in memory_candidates:
+            if candidates.hits and candidates.memory_ref is None:
+                raise PreparedContextInvariantError("memory-ref-missing")
+            scope_id = candidates.scope_id or current_scope_id or ""
+            for hit in candidates.hits:
+                if hit.memory_ref != candidates.memory_ref:
+                    raise PreparedContextInvariantError("memory-ref-mismatch")
+                if not hit.entry_id.strip() or not hit.entry_version_id.strip() or not hit.text.strip():
+                    continue
+                identity = (scope_id, hit.entry_id, hit.entry_version_id)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                owners.append((scope_id, hit.memory_ref, hit.entry_id, hit.entry_version_id))
+                texts.append(hit.text)
+
+        chosen: list[tuple[int, int, int]] = []
+        dropped = 0
+        for span in rank_spans(request.query, texts):
+            if len(chosen) >= self.entry_limit:
+                break
+            if _already_covered(chosen, span):
+                continue
+            grown = [*chosen, (span.entry_index, span.start, span.end)]
+            if _fragment_bytes(grown, owners, texts) <= request.max_bytes:
+                chosen = grown
+                continue
+            shrunk = _shrink_to_budget(span, chosen, owners, texts, request.max_bytes)
+            if shrunk is None:
+                dropped += 1
+                continue
+            chosen = [*chosen, shrunk]
+
+        omissions = PreparedContextOmissions(
+            dropped_items=dropped,
+            dropped_no_fitting_truncation=dropped,
+        )
+        if not chosen:
+            return PreparedContextBuild(context=self.empty(), origins=(), omissions=omissions)
+        chosen.sort()
+        fragments = _preview(chosen, owners, texts)
+        content = _render_fragments(fragments)
+        content_bytes = len(content.encode("utf-8"))
+        if content_bytes > request.max_bytes:
+            raise PreparedContextInvariantError("output-budget")
+        return PreparedContextBuild(
+            context=PreparedContext(status="ready", content=content, content_bytes=content_bytes),
+            origins=tuple(fragment.address for fragment in fragments),
+            omissions=omissions,
+            fragments=fragments,
         )
 
     def probe_budget(
@@ -692,6 +785,97 @@ def _render(entries: Sequence[_PreparedContextEntry]) -> str:
     }
     encoded = json.dumps(envelope, ensure_ascii=False, separators=(",", ":"))
     return "\n\n".join((TRUST_POLICY, f"{_BEGIN_MARKER}\n{encoded}\n{_END_MARKER}"))
+
+
+def _preview(
+    chosen: Sequence[tuple[int, int, int]],
+    owners: Sequence[tuple[str, ArtifactRef, str, str]],
+    texts: Sequence[str],
+) -> tuple[PreparedContextFragment, ...]:
+    """Materialize provisional selections so byte accounting uses the real envelope."""
+
+    fragments = []
+    for index, start, end in chosen:
+        scope_id, memory_ref, entry_id, entry_version_id = owners[index]
+        fragments.append(
+            PreparedContextFragment(
+                address=MemoryEntryAddress(
+                    memory=ArtifactAddress(scope_id=scope_id, artifact=memory_ref),
+                    entry_id=entry_id,
+                    entry_version_id=entry_version_id,
+                ),
+                start=start,
+                end=end,
+                text=texts[index][start:end],
+            )
+        )
+    return tuple(fragments)
+
+
+def _render_fragments(fragments: Sequence[PreparedContextFragment]) -> str:
+    """Render selected fragments through the prepared-context envelope."""
+
+    envelope = {
+        "trust": "untrusted_history",
+        "items": [
+            {
+                "citation": {
+                    "scope_id": fragment.address.memory.scope_id,
+                    "memory_ref": fragment.address.memory.artifact.model_dump(mode="json"),
+                    "entry_id": fragment.address.entry_id,
+                    "entry_version_id": fragment.address.entry_version_id,
+                },
+                "content": fragment.text,
+                "start": fragment.start,
+                "end": fragment.end,
+            }
+            for fragment in fragments
+        ],
+    }
+    encoded = json.dumps(envelope, ensure_ascii=False, separators=(",", ":"))
+    return "\n\n".join((TRUST_POLICY, f"{_BEGIN_MARKER}\n{encoded}\n{_END_MARKER}"))
+
+
+def _fragment_bytes(
+    chosen: Sequence[tuple[int, int, int]],
+    owners: Sequence[tuple[str, ArtifactRef, str, str]],
+    texts: Sequence[str],
+) -> int:
+    return len(_render_fragments(_preview(chosen, owners, texts)).encode("utf-8"))
+
+
+def _already_covered(chosen: Sequence[tuple[int, int, int]], span: RankedSpan) -> bool:
+    return any(
+        index == span.entry_index and start <= span.start and span.end <= end for index, start, end in chosen
+    )
+
+
+def _shrink_to_budget(
+    span: RankedSpan,
+    chosen: Sequence[tuple[int, int, int]],
+    owners: Sequence[tuple[str, ArtifactRef, str, str]],
+    texts: Sequence[str],
+    max_bytes: int,
+) -> tuple[int, int, int] | None:
+    """Shorten one span to the longest prefix that still fits the remaining budget."""
+
+    text = texts[span.entry_index]
+    available = span.end - span.start
+    if available <= _MIN_FRAGMENT_CHARS:
+        return None
+    low, high = _MIN_FRAGMENT_CHARS, available
+    best: tuple[int, int, int] | None = None
+    while low <= high:
+        length = (low + high) // 2
+        end = span.start + length
+        while end > span.start + _MIN_FRAGMENT_CHARS and text[end - 1].isspace():
+            end -= 1
+        if _fragment_bytes([*chosen, (span.entry_index, span.start, end)], owners, texts) <= max_bytes:
+            best = (span.entry_index, span.start, end)
+            low = length + 1
+        else:
+            high = length - 1
+    return best
 
 
 def _text_item(entry: _PreparedContextEntry) -> ContextTextItem:

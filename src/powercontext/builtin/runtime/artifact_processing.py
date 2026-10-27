@@ -47,6 +47,7 @@ else:
     from multiprocessing.popen_spawn_posix import Popen as SpawnPopen
 
 from powercontext._logging import log_safely
+from powercontext.builtin.persistence.cursors import SourceCursorRepository
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.errors import ArtifactProcessingLeadershipLostError
 from powercontext.builtin.persistence.processing_intents import ArtifactProcessingIntentRepository
@@ -57,7 +58,12 @@ from powercontext.builtin.persistence.supervision import (
     ArtifactProcessingLeaseRepository,
     database_utc_now,
 )
-from powercontext.builtin.persistence.tables import ARTIFACT_PROCESSING_INTENTS_TABLE, ARTIFACT_PROCESSING_LEASES_TABLE
+from powercontext.builtin.persistence.tables import (
+    ARTIFACT_PROCESSING_INTENTS_TABLE,
+    ARTIFACT_PROCESSING_LEASES_TABLE,
+    SOURCES_TABLE,
+    SOURCE_JOURNAL_HEADS_TABLE,
+)
 from powercontext.builtin.runtime.processing_contracts import (
     ArtifactProcessingWorkAssignment,
     ArtifactProcessingWorkerCompletion,
@@ -79,6 +85,7 @@ _DISCOVERY_PAGE_SIZE = 100
 _RETRY_STATE_LIMIT = 1000
 _CHANNEL_QUEUE_LIMIT = _DISCOVERY_PAGE_SIZE // 2
 _DISCOVERY_PAGE_DELAY_SECONDS = 0.01
+_COUNT_REEVALUATION_SECONDS = 0.1
 _DISCOVERY_TIMEOUT_SECONDS = 2.0
 _SPAWN_SIGTERM_GRACE_SECONDS = 1.0
 _WORKER_SHUTDOWN_TIMEOUT_SECONDS = 5.0
@@ -117,6 +124,10 @@ class ArtifactProcessingBinding:
     # Only automatic admission is filtered; already accepted requests retain
     # their own Worker authorization and domain completion semantics.
     automatic_scope_filter: Callable[[AsyncConnection, tuple[str, ...]], Awaitable[frozenset[str]]] | None = None
+    # Count admission starts one ordinary invocation per Scope as soon as its
+    # pending journal identities reach this threshold. Explicit requests never
+    # pass through the gate, so flush still bypasses it.
+    source_count_threshold: int | None = None
 
     def __post_init__(self) -> None:
         if not self.binding_name or self.binding_name != self.binding_name.strip():
@@ -131,6 +142,10 @@ class ArtifactProcessingBinding:
             raise ValueError("max_workers must be a positive integer")  # noqa: TRY003
         if self.worker_timeout_seconds <= 0:
             raise ValueError("worker_timeout_seconds must be positive")  # noqa: TRY003
+        if self.source_count_threshold is not None and (
+            type(self.source_count_threshold) is not int or self.source_count_threshold < 1
+        ):
+            raise ValueError("source_count_threshold must be a positive integer")  # noqa: TRY003
         if self.automatic_processing_interval is not None:
             if self.automatic_processing_interval.total_seconds() <= 0:
                 raise ValueError("automatic interval must be positive")  # noqa: TRY003
@@ -715,7 +730,14 @@ class ArtifactProcessingSupervisor:
         async with self._database.transaction() as connection:
             await self._leases.require_fence(connection, self._require_current_fence())
             persisted = await self._binding_states.load(connection, binding.binding_name, for_update=True)
-            enabled = binding.automatic_processing_interval is not None or binding.cron is not None
+            # Count admission is an OR alternative to the time condition: the
+            # threshold alone must still open a scan, and the per-candidate gate
+            # below decides which Scopes actually reach it.
+            enabled = (
+                binding.automatic_processing_interval is not None
+                or binding.cron is not None
+                or binding.source_count_threshold is not None
+            )
             if not enabled:
                 if persisted is not None and persisted.scan_in_progress:
                     await self._binding_states.finish_scan(connection, binding.binding_name)
@@ -723,13 +745,62 @@ class ArtifactProcessingSupervisor:
                 scan_after = 0
             else:
                 now = await database_utc_now(connection)
+                scheduled = False
+                # Count admission stays additive: it opens a scan as soon as
+                # pending journal identities appear, while leaving the existing
+                # schedule path untouched. A threshold therefore never suppresses
+                # the time condition, and the two remain OR alternatives.
+                #
+                # A count pass is only worth opening when journal input is still
+                # unconsumed somewhere. Without this read-only probe every idle
+                # tick would rewrite the binding state and re-freeze a scan,
+                # which keeps the SQLite write lock busy while nothing changed.
+                count_due = (
+                    binding.source_count_threshold is not None
+                    and (persisted is None or not persisted.scan_in_progress)
+                    and await self._has_unconsumed_input(connection, binding)
+                )
+                # The time condition has to be read before registration: a
+                # scheduled pass publishes below-threshold Scopes, so whether an
+                # interval is due decides what registration is allowed to hand
+                # to the ordinary dirty path.
+                checkpoint = None if persisted is None else persisted.last_schedule_checkpoint_at
+                due, next_time = _schedule_deadline(binding, checkpoint, now)
+                # Count admission opens scans on its own, which would move the
+                # checkpoint and postpone the interval the time condition is
+                # measured against. The schedule is therefore read here as
+                # "was an interval due", independent of whether this cycle
+                # happens to be the one that ends up running the scan.
+                scheduled = due is not None
+                if count_due:
+                    # A frozen scan bounds itself by the highest registered intent.
+                    # Count admission can start before any intent row exists for
+                    # this binding, so register the pending Scopes first;
+                    # otherwise the scan would freeze at zero and admit nothing.
+                    await self._register_dirty_scopes(connection, binding, scheduled=scheduled)
                 if persisted is None or not persisted.scan_in_progress:
-                    checkpoint = None if persisted is None else persisted.last_schedule_checkpoint_at
-                    due, next_time = _schedule_deadline(binding, checkpoint, now)
                     next_schedule_at = asyncio.get_running_loop().time() + max(0, (next_time - now).total_seconds())
-                    if due is not None:
-                        persisted = await self._binding_states.start_scan(connection, binding.binding_name, due)
+                    if due is not None or count_due:
+                        # ``start_scan`` stamps the interval checkpoint by
+                        # default. A count-driven scan must not do that: it would
+                        # keep pushing the time condition one interval into the
+                        # future, so a below-threshold Scope could never be
+                        # released by the schedule alone. Only a scheduled pass
+                        # advances it.
+                        persisted = await self._binding_states.start_scan(
+                            connection,
+                            binding.binding_name,
+                            due,
+                            advance_checkpoint=due is not None,
+                        )
                         scan_after = 0
+                if persisted is not None and persisted.scan_in_progress and scan_generation == persisted.scan_generation:
+                    # A pass that has already reached the end of this generation
+                    # finishes the scan and resets the page cursor. Reopening the
+                    # scan would replay the same frozen generation forever, so a
+                    # later generation must finish the stale scan first and let
+                    # the next cycle start a fresh one.
+                    await self._binding_states.finish_scan(connection, binding.binding_name)
                 if persisted is not None and persisted.scan_in_progress:
                     scan_in_progress = True
                     if scan_generation != persisted.scan_generation:
@@ -754,12 +825,46 @@ class ArtifactProcessingSupervisor:
                     eligible = frozenset(candidates)
                     if candidates and binding.automatic_scope_filter is not None:
                         eligible &= await binding.automatic_scope_filter(connection, candidates)
+                    if eligible and binding.source_count_threshold is not None:
+                        # The threshold decides whether pending input is enough
+                        # to start work on its own. It must not veto the time
+                        # condition, so the check only asks whether *any*
+                        # candidate reached it: a scheduled cycle still admits
+                        # below-threshold Scopes, while a count-only cycle
+                        # admits nothing until some Scope qualifies.
+                        reached = await self._count_eligible(connection, binding, eligible)
+                        # A scheduled cycle already has its own reason to run, so
+                        # it keeps every eligible candidate. A cycle driven by the
+                        # count alone must fall back to an empty set when no
+                        # candidate qualifies; leaving the full candidate set in
+                        # place would admit below-threshold Scopes.
+                        eligible = eligible if scheduled else reached
                     for row in rows:
                         # A full page of ineligible rows still advances discovery;
                         # keep their dirty Source and request counters untouched.
                         scan_after = row.pending_sequence
                         if row.scope_id not in eligible:
+                            # The domain layer publishes dirty work in the same
+                            # transaction as the capture, so a below-threshold
+                            # Scope is already dirty here. Withdraw exactly that
+                            # one publication: advancing the clean point to the
+                            # current dirty generation would also swallow the
+                            # input the next capture publishes. A later cycle
+                            # that does satisfy the threshold re-publishes from
+                            # the incremented counter without extra help.
+                            if binding.source_count_threshold is not None:
+                                await self._intents.withdraw_dirty(
+                                    connection,
+                                    row.scope_id,
+                                    binding.binding_name,
+                                    clean_generation=row.dirty_generation - 1,
+                                )
                             continue
+                        # Count admission owns the publish rule for this Scope.
+                        # The capture transaction already published this input, so
+                        # admit() can accept it straight away; no re-publication is
+                        # needed and re-publishing would undo the withdrawal of the
+                        # Scopes that did not reach the threshold.
                         await self._intents.admit(
                             connection, row.scope_id, binding.binding_name, persisted.scan_generation
                         )
@@ -781,6 +886,105 @@ class ArtifactProcessingSupervisor:
         state.next_discovery_at = next_discovery_at
         for scope in admitted:
             self._enqueue(state, scope)
+
+    @staticmethod
+    async def _register_dirty_scopes(
+        connection: AsyncConnection,
+        binding: ArtifactProcessingBinding,
+        *,
+        scheduled: bool = False,
+    ) -> None:
+        """Make pending journal Scopes visible before a scan freezes its upper bound.
+
+        Pending providers own this reconciliation elsewhere; this only runs for
+        count admission on the scan path, and intentionally reuses the same
+        reason as startup reconciliation rather than inventing new state.
+        """
+
+        heads = SOURCE_JOURNAL_HEADS_TABLE
+        threshold = binding.source_count_threshold
+        rows = (await connection.execute(select(heads.c.scope_id, heads.c.position))).all()
+        cursors = await SourceCursorRepository().load_many(
+            connection, tuple(str(scope) for scope, _ in rows), binding.binding_name
+        )
+        intents = ArtifactProcessingIntentRepository()
+        for scope, high in rows:
+            stored = cursors.get(str(scope))
+            consumed = 0 if stored is None else stored.cursor.sequence
+            if int(high) <= int(consumed):
+                continue
+            if threshold is not None and not scheduled:
+                # Count admission owns its own publication rule: a Scope below
+                # the threshold must stay unpublished even on the very first
+                # pass, otherwise registration would hand the ordinary dirty
+                # path input that the count condition is supposed to hold back.
+                # A scheduled pass is the time condition reaching its deadline,
+                # which is an OR alternative to the count, so it publishes every
+                # pending Scope regardless of the threshold.
+                pending = await _pending_journal_count(connection, str(scope), int(consumed))
+                if pending < threshold:
+                    continue
+            intent = await intents.load(connection, str(scope), binding.binding_name, for_update=True)
+            if intent is None or intent.dirty_generation == intent.clean_generation:
+                await intents.mark_dirty(connection, str(scope), binding.binding_name)
+
+    @staticmethod
+    async def _has_unconsumed_input(connection: AsyncConnection, binding: ArtifactProcessingBinding) -> bool:
+        """Report whether any Scope still has journal identities past its cursor.
+
+        This is a read-only probe that decides whether a count pass can change
+        anything at all. It deliberately reuses the persisted cursor rather than
+        comparing journal heads with an arithmetic difference: the cursor meaning
+        differs per Family, so only the per-Scope "newer than consumed" test is
+        valid for every binding.
+        """
+
+        heads = SOURCE_JOURNAL_HEADS_TABLE
+        rows = (await connection.execute(select(heads.c.scope_id))).scalars().all()
+        if not rows:
+            return False
+        cursors = await SourceCursorRepository().load_many(
+            connection, tuple(str(scope) for scope in rows), binding.binding_name
+        )
+        for scope in rows:
+            stored = cursors.get(str(scope))
+            consumed = 0 if stored is None else stored.cursor.sequence
+            if await _pending_journal_count(connection, str(scope), int(consumed)) > 0:
+                return True
+        return False
+
+    @staticmethod
+    async def _count_eligible(
+        connection: AsyncConnection,
+        binding: ArtifactProcessingBinding,
+        candidates: frozenset[str],
+    ) -> frozenset[str]:
+        """Keep the Scopes whose pending journal identities reached the threshold.
+
+        The count is the persisted journal head minus the successful cursor, so
+        it follows journal identity only: a replayed capture or a receipt trust
+        upgrade adds no position, and a lineage-only Source adds exactly one.
+        A Scope below the threshold keeps ordinary dirty work for later input,
+        the time condition, or an explicit flush.
+        """
+
+        threshold = binding.source_count_threshold
+        if threshold is None or not candidates:
+            return candidates
+        heads = SOURCE_JOURNAL_HEADS_TABLE
+        rows = (
+            await connection.execute(
+                select(heads.c.scope_id).where(heads.c.scope_id.in_(tuple(candidates)))
+            )
+        ).scalars()
+        cursors = await SourceCursorRepository().load_many(connection, tuple(candidates), binding.binding_name)
+        eligible: set[str] = set()
+        for scope in rows:
+            stored = cursors.get(str(scope))
+            consumed = 0 if stored is None else stored.cursor.sequence
+            if await _pending_journal_count(connection, str(scope), int(consumed)) >= threshold:
+                eligible.add(str(scope))
+        return frozenset(eligible)
 
     @staticmethod
     def _fresh_capacity(state: _FamilyState) -> int:
@@ -1082,6 +1286,13 @@ class ArtifactProcessingSupervisor:
         deadlines: list[float] = []
         for state in self._families.values():
             if len(state.running) >= state.binding.max_workers:
+                # Count admission cannot rely on delivery: the domain layer
+                # publishes journal input without waking this supervisor, and the
+                # threshold is met by accumulation. Keep polling even while the
+                # worker pool is saturated so the input is admitted once a Worker
+                # frees up.
+                if state.binding.source_count_threshold is not None:
+                    deadlines.append(now + min(_COUNT_REEVALUATION_SECONDS, self._tick))
                 continue
             deadlines.extend(
                 retry.deadline
@@ -1095,6 +1306,13 @@ class ArtifactProcessingSupervisor:
                 deadlines.append(state.next_schedule_at)
             if state.discovery_pending or state.scan_in_progress or not state.reconcile_complete or state.degraded:
                 deadlines.append(max(now, state.next_discovery_at))
+            elif state.binding.source_count_threshold is not None:
+                # A count threshold has no schedule to wake it, and capture does
+                # not notify the worker directly. Poll on the ordinary tick so a
+                # Scope that reaches the threshold is admitted without waiting
+                # for unrelated traffic; the scan itself stays cheap because it
+                # only reads intents and a per-Scope journal count.
+                deadlines.append(now + min(_COUNT_REEVALUATION_SECONDS, self._tick))
         return None if not deadlines else max(0.001, min(deadlines) - now)
 
     def _log_failure(
@@ -1132,6 +1350,24 @@ class ArtifactProcessingSupervisor:
                 else type(error).__name__,
             },
         )
+
+
+async def _pending_journal_count(connection: AsyncConnection, scope_id: str, consumed_sequence: int) -> int:
+    """Count persisted journal identities a processor has not consumed yet.
+
+    Journal positions are unique and dense per Scope, so this mixes no body
+    length, token count, or generation result into the admission decision.
+    """
+
+    table = SOURCES_TABLE
+    return int(
+        await connection.scalar(
+            select(func.count())
+            .select_from(table)
+            .where(table.c.scope_id == scope_id, table.c.journal_position > consumed_sequence)
+        )
+        or 0
+    )
 
 
 def _schedule_deadline(

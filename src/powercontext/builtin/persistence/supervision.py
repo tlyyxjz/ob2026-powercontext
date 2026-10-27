@@ -305,23 +305,32 @@ class ArtifactProcessingBindingStateRepository:
         binding_name: str,
         checkpoint_at: datetime | None = None,
         /,
+        *,
+        advance_checkpoint: bool = True,
     ) -> StoredArtifactProcessingBindingState:
-        """Freeze a bounded admission scan; caller must hold its valid fence."""
+        """Freeze a bounded admission scan; caller must hold its valid fence.
+
+        ``advance_checkpoint`` exists for admission conditions that open a scan
+        for their own reason. Such a scan must leave the interval checkpoint
+        alone, otherwise it would keep postponing the time condition by one
+        interval on every pass and the schedule could never fall due.
+        """
 
         current = await self.load(connection, binding_name, for_update=True)
         if current is not None and current.scan_in_progress:
             return current
-        checkpoint = await database_utc_now(connection) if checkpoint_at is None else checkpoint_at
-        if checkpoint.tzinfo is not None:
-            checkpoint = checkpoint.astimezone(UTC).replace(tzinfo=None)
-        values = {
-            "last_schedule_checkpoint_at": checkpoint,
+        values: dict[str, object] = {
             "scan_generation": 1 if current is None else current.scan_generation + 1,
             "scan_in_progress": True,
             "scan_upper_pending_sequence": await ArtifactProcessingIntentRepository().max_sequence(
                 connection, binding_name
             ),
         }
+        if advance_checkpoint:
+            checkpoint = await database_utc_now(connection) if checkpoint_at is None else checkpoint_at
+            if checkpoint.tzinfo is not None:
+                checkpoint = checkpoint.astimezone(UTC).replace(tzinfo=None)
+            values["last_schedule_checkpoint_at"] = checkpoint
         table = ARTIFACT_PROCESSING_BINDING_STATES_TABLE
         if current is None:
             await connection.execute(insert(table).values(binding_name=binding_name, **values))

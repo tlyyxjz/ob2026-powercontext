@@ -171,6 +171,42 @@ class ArtifactProcessingIntentRepository:
         )
         return cast(StoredArtifactProcessingIntent, await self.load(connection, scope_id, binding_name))
 
+    async def withdraw_dirty(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        binding_name: str,
+        /,
+        *,
+        clean_generation: int,
+    ) -> StoredArtifactProcessingIntent:
+        """Mark published domain work as seen without invoking the processor.
+
+        Callers that own an admission condition use this to hold back input
+        they must not process yet. It never raises ``handled_generation``: the
+        dirty counter is lowered to the acknowledged clean point, so the work
+        stays published for a later cycle that does satisfy the condition.
+        """
+
+        _require_nonnegative("clean_generation", clean_generation)
+        current = await self.load(connection, scope_id, binding_name, for_update=True)
+        if current is None:
+            return cast(
+                StoredArtifactProcessingIntent,
+                await self.ensure(connection, scope_id, binding_name),
+            )
+        if current.clean_generation == current.dirty_generation:
+            return current
+        if clean_generation > current.dirty_generation:
+            raise InvalidRepositoryArgumentError("clean_generation", "cannot acknowledge unseen domain work")
+        table = ARTIFACT_PROCESSING_INTENTS_TABLE
+        await connection.execute(
+            update(table)
+            .where(table.c.scope_id == scope_id, table.c.binding_name == binding_name)
+            .values(clean_generation=clean_generation)
+        )
+        return cast(StoredArtifactProcessingIntent, await self.load(connection, scope_id, binding_name))
+
     async def scan(
         self,
         connection: AsyncConnection,
