@@ -210,8 +210,12 @@ class PDFPageTextEvidenceProjection:
         )
 
 
-async def search_pdf_pages(memory: object, question: str, *, limit: int = 20) -> tuple[MemoryCitation, ...]:
+async def search_pdf_pages(memory: object, question: str, limit: int = 10) -> tuple[MemoryCitation, ...]:
     """Return citations whose pages are all distinct exact pages.
+
+    The published contract is ``search_pdf_pages(memory, question, limit=10)``:
+    ``limit`` is an ordinary positional-or-keyword parameter with a default of 10,
+    so a caller may pass it either way.
 
     Space-separated FTS is an implicit AND, and a financial question's own wording
     rarely appears on its evidence page (an EBITDA question's evidence page is a
