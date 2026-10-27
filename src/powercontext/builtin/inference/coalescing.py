@@ -74,6 +74,7 @@ class CoalescingEmbeddingModel:
         self._cache_size = cache_size
         self._cache: OrderedDict[str, _Vector] = OrderedDict()
         self._pending: dict[str, asyncio.Future] = {}
+        self._dispatched: set[str] = set()
         self._batch_usage: dict[int, InferenceUsage] = {}
         self._next_batch_id = 0
         self._flush_handle: object = None
@@ -92,6 +93,7 @@ class CoalescingEmbeddingModel:
         unique = tuple(dict.fromkeys(requested))
         waiters: dict[str, asyncio.Future] = {}
         loop = asyncio.get_running_loop()
+        needs_flush = False
         for text in unique:
             if text in self._cache:
                 self._cache.move_to_end(text)
@@ -100,8 +102,11 @@ class CoalescingEmbeddingModel:
             if future is None:
                 future = loop.create_future()
                 self._pending[text] = future
+                needs_flush = True
             waiters[text] = future
-        if waiters:
+        # A text that is already in flight joins that batch; only a genuinely new
+        # pending identity schedules a flush.
+        if needs_flush:
             self._schedule_flush()
 
         resolved: dict[str, _Vector] = {}
@@ -127,18 +132,28 @@ class CoalescingEmbeddingModel:
     def _schedule_flush(self) -> None:
         if self._flush_handle is not None:
             return
+        if not self._has_undispatched():
+            return
         loop = asyncio.get_running_loop()
         if self._coalesce_ms <= 0:
             self._flush_handle = loop.call_soon(self._flush)
         else:
             self._flush_handle = loop.call_later(self._coalesce_ms / 1000, self._flush)
 
+    def _has_undispatched(self) -> bool:
+        return any(text not in self._dispatched for text in self._pending)
+
     def _flush(self) -> None:
         self._flush_handle = None
-        if not self._pending:
+        # Only texts that are not already in flight may start a new batch.
+        texts = tuple(text for text in self._pending if text not in self._dispatched)
+        if not texts:
             return
-        texts = tuple(self._pending)
-        futures = {text: self._pending.pop(text) for text in texts}
+        futures = {text: self._pending[text] for text in texts}
+        # Dispatched futures stay in ``_pending`` until the batch settles, so a call
+        # that arrives while the provider is still running joins the in-flight batch
+        # instead of issuing a second request for the same text.
+        self._dispatched.update(texts)
         task = asyncio.ensure_future(self._run_batches(texts, futures))
         # The flush outlives any single waiter: hold a reference so it is never collected.
         self._flush_task = task
@@ -150,18 +165,25 @@ class CoalescingEmbeddingModel:
             try:
                 result = await self._model.embed(chunk)
             except asyncio.CancelledError:
-                for future in targets:
+                for text, future in zip(chunk, targets, strict=True):
+                    self._forget(text, future)
                     if not future.done():
                         future.cancel()
+                for text in texts[start + len(chunk) :]:
+                    self._forget(text, futures[text])
+                    if not futures[text].done():
+                        futures[text].cancel()
                 raise
             except Exception as error:  # noqa: BLE001 - delivered verbatim to every waiter.
-                for future in targets:
+                for text, future in zip(chunk, targets, strict=True):
+                    self._forget(text, future)
                     if not future.done():
                         future.set_exception(error)
                 continue
             if len(result.vectors) != len(chunk):
                 error = ValueError("embedding provider returned a mismatched vector count")
-                for future in targets:
+                for text, future in zip(chunk, targets, strict=True):
+                    self._forget(text, future)
                     if not future.done():
                         future.set_exception(error)
                 continue
@@ -172,6 +194,18 @@ class CoalescingEmbeddingModel:
                 self._remember(text, vector)
                 if not future.done():
                     future.set_result((vector, batch_id))
+                self._forget(text, future)
+
+    def _forget(self, text: str, future: asyncio.Future) -> None:
+        """Drop the pending slot once its future is settled.
+
+        A settled future must not keep intercepting new calls: the cache or a fresh
+        batch has to serve them, and a cancelled waiter must not leave a tombstone.
+        """
+
+        self._dispatched.discard(text)
+        if self._pending.get(text) is future:
+            del self._pending[text]
 
     def _remember(self, text: str, vector: _Vector) -> None:
         if self._cache_size == 0:
