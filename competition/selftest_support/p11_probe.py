@@ -52,6 +52,11 @@ QUERY_COUNT = 20
 DIM = 384
 LIMIT = 10
 RRF_K = 60
+# The service asks each channel for max(limit * 4, 32) candidates and fuses those,
+# not the ten it finally returns. Reconstructing the frozen path from the ten rows a
+# single-channel search returns would fuse truncated channels, which removes rivals
+# the real fusion saw and flatters the frozen path. Ask for the channel budget.
+CHANNEL = max(LIMIT * 4, 32)
 SCOPES = ("project", "scope-b", "scope-c")
 
 PROFILE = EmbeddingProfile(
@@ -212,6 +217,7 @@ async def main() -> int:
     dual_mrrs: list[float] = []
     latencies: list[float] = []
     regressing: list[str] = []
+    channel_sizes: list[tuple[int, int]] = []
     vector_marked = 0
     total_hits = 0
     explain = ""
@@ -234,8 +240,8 @@ async def main() -> int:
                 result = await memory.search(question, memories=(head,), mode="hybrid", limit=LIMIT)
                 latencies.append((time.perf_counter() - start) * 1000.0)
 
-                fts_only = await memory.search(question, memories=(head,), mode="fts", limit=LIMIT)
-                vector_only = await memory.search(question, memories=(head,), mode="vector", limit=LIMIT)
+                fts_only = await memory.search(question, memories=(head,), mode="fts", limit=CHANNEL)
+                vector_only = await memory.search(question, memories=(head,), mode="vector", limit=CHANNEL)
                 dual_hits, _ = rrf(fts_only.hits, vector_only.hits, LIMIT)
 
                 ranked = [inverse.get(hit.text, "") for hit in result.hits]
@@ -254,6 +260,7 @@ async def main() -> int:
                     total_hits += 1
                     if "vector" in hit.matched_by:
                         vector_marked += 1
+                channel_sizes.append((len(fts_only.hits), len(vector_only.hits)))
 
         native: list[tuple[str, object]] = []
         with captured() as statements:
@@ -283,6 +290,8 @@ async def main() -> int:
         "per_query_regressions": len(regressing),
         "p50_latency_ms": round(statistics.median(latencies), 1),
         "max_latency_ms": round(max(latencies), 1),
+        "channel_budget": CHANNEL,
+        "mean_channel_rows": [round(statistics.fmean(c[0] for c in channel_sizes), 1), round(statistics.fmean(c[1] for c in channel_sizes), 1)],
         "hits_matched_by_vector": f"{vector_marked}/{total_hits}",
         "explain_has_text_retrieval_scan": "TEXT RETRIEVAL SCAN" in explain,
         "explain_has_vector_index": "VECTOR INDEX" in explain,
