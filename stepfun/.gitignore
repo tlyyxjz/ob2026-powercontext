@@ -1,0 +1,11 @@
+# 依赖与产物
+node_modules/
+
+# 模型权重：由 npm run model 现拉（约 113 MB）
+models/
+
+# seekdb 数据目录：每个部署实例自己长
+data/
+
+# 离线评测输出
+bench-report.json

@@ -1,0 +1,122 @@
+[
+  {
+    "id": "s01",
+    "text": "seekdb 是一个面向边缘与端侧的嵌入式数据库，默认用 ik 分词器建立全文索引，用 HNSW 建立向量索引，维度 384、距离度量 cosine。",
+    "metadata": { "topic": "seekdb", "lang": "zh" }
+  },
+  {
+    "id": "s02",
+    "text": "混合检索把全文通道和向量通道的候选集用 RRF 融合。RRF 的分数是每个通道 1/(k+rank) 之和，k 默认取 60，所以单通道第一名约 0.0164，两个通道都排第一约 0.0328。",
+    "metadata": { "topic": "hybrid", "lang": "zh" }
+  },
+  {
+    "id": "s03",
+    "text": "ef_construction 控制 HNSW 建图时候选集的大小，ef_search 控制查询时候选集的大小。前者大了建索引慢但图质量高，后者大了召回高但延迟升。",
+    "metadata": { "topic": "hnsw", "lang": "zh" }
+  },
+  {
+    "id": "s04",
+    "text": "数据库里的近似最近邻检索不需要遍历全部记录，它沿着图结构跳几跳就能找到足够接近的候选，代价是召回率不再是 100%。",
+    "metadata": { "topic": "ann", "lang": "zh" }
+  },
+  {
+    "id": "s05",
+    "text": "INT8 量化把每个权重从 32 位浮点压到 8 位整数，体积大约降到四分之一。代价是精度损失，通常表现为相似度排序在边界样本上出现轻微抖动。",
+    "metadata": { "topic": "quantization", "lang": "zh" }
+  },
+  {
+    "id": "s06",
+    "text": "ONNX Runtime 的 WASM 后端完全跑在浏览器的 WebAssembly 沙箱里，不依赖显卡；JSEP 版本会尝试把算子派发到 WebGPU，派发失败时回落到 CPU。",
+    "metadata": { "topic": "runtime", "lang": "zh" }
+  },
+  {
+    "id": "s07",
+    "text": "把模型放在 Web Worker 里跑，主线程就不会被推理卡住，界面上的进度条和耗时读数才有意义。Worker 通过 postMessage 把阶段结果回传。",
+    "metadata": { "topic": "browser", "lang": "zh" }
+  },
+  {
+    "id": "s08",
+    "text": "全文检索擅长精确命中专有名词、错误码、参数名这类字面量；它对同义改写无能为力，用户换个说法就召回不到。",
+    "metadata": { "topic": "fts", "lang": "zh" }
+  },
+  {
+    "id": "s09",
+    "text": "向量检索擅长语义相近但用词不同的情况，比如「怎么让搜索结果更准」和「提高召回率」在向量空间里距离很近，但字面上一个词都不重合。",
+    "metadata": { "topic": "vector", "lang": "zh" }
+  },
+  {
+    "id": "s10",
+    "text": "倒排索引把词映射到文档编号列表，查询时取交集或并集。建立索引前需要分词，中文必须用专门的分词器，否则整句会被当成一个词。",
+    "metadata": { "topic": "fts", "lang": "zh" }
+  },
+  {
+    "id": "s11",
+    "text": "写入之后向量索引不会立刻可见，需要显式刷新。刷新在大批量写入后可能要跑几秒到几十秒，期间查询看不到新数据。",
+    "metadata": { "topic": "index", "lang": "zh" }
+  },
+  {
+    "id": "s12",
+    "text": "all-MiniLM-L6-v2 是一个 6 层的小型句向量模型，输出 384 维。它只吃英文语料训练，处理中文时靠 subword 切分勉强可用，语义对齐能力有限。",
+    "metadata": { "topic": "model", "lang": "zh" }
+  },
+  {
+    "id": "s13",
+    "text": "用户隐私敏感的场景不该把文档发到云端做 embedding。把推理搬到浏览器端，原文和向量都留在本机，服务端只收到已经算好的向量。",
+    "metadata": { "topic": "privacy", "lang": "zh" }
+  },
+  {
+    "id": "s14",
+    "text": "Recall@K 衡量的是：在所有相关文档里，前 K 条结果覆盖了多少比例。它是判断量化有没有伤到检索质量的直接指标，比肉眼看几条结果可靠。",
+    "metadata": { "topic": "metric", "lang": "zh" }
+  },
+  {
+    "id": "s15",
+    "text": "WebGPU 在无头浏览器、软件渲染的容器、以及部分集成显卡驱动上常常拿不到适配器，此时 requestAdapter 返回 null，必须准备好回落到 WASM 的路径。",
+    "metadata": { "topic": "webgpu", "lang": "zh" }
+  },
+  {
+    "id": "s16",
+    "text": "HNSW 的分层结构像跳表：上层稀疏用于快速跨越，下层稠密用于精确定位。插入时随机决定节点能到达的最高层，层数由 mL 参数控制。",
+    "metadata": { "topic": "hnsw", "lang": "zh" }
+  },
+  {
+    "id": "s17",
+    "text": "余弦距离对向量长度不敏感，只看向量方向。把向量归一化之后再算内积，等价于算余弦相似度，这也是句向量模型输出时常做 normalize 的原因。",
+    "metadata": { "topic": "vector", "lang": "zh" }
+  },
+  {
+    "id": "s18",
+    "text": "问：为什么第一次查询特别慢？答：首次查询要加载索引文件、预热缓存、初始化算子，冷启动开销往往比稳态高两个数量级，第二次就恢复正常。",
+    "metadata": { "topic": "perf", "lang": "zh" }
+  },
+  {
+    "id": "s19",
+    "text": "The quick brown fox jumps over the lazy dog. This pangram contains every letter of the English alphabet and is commonly used to test typewriters and fonts.",
+    "metadata": { "topic": "misc", "lang": "en" }
+  },
+  {
+    "id": "s20",
+    "text": "Batching amortises the per-call overhead of the inference session. Feeding 8 sentences at once is usually several times faster than 8 separate calls of one sentence each.",
+    "metadata": { "topic": "perf", "lang": "en" }
+  },
+  {
+    "id": "s21",
+    "text": "边缘知识库的典型形态是：一份本地文档、一台没有显卡的机器、一个不能联网的环境。所有计算必须在这台机器上完成，包括把问题变成向量。",
+    "metadata": { "topic": "edge", "lang": "zh" }
+  },
+  {
+    "id": "s22",
+    "text": "Token 化的时候，中文一个字通常对应一个或多个 token。句向量模型有最大长度限制，超长文本会被截断，所以入库前要先切块，块之间留一点重叠。",
+    "metadata": { "topic": "chunking", "lang": "zh" }
+  },
+  {
+    "id": "s23",
+    "text": "把检索结果连同分数一起展示，比只给一个列表有用得多。分数能说明这条命中是来自单通道还是双通道，也能暴露排序是否稳定。",
+    "metadata": { "topic": "ux", "lang": "zh" }
+  },
+  {
+    "id": "s24",
+    "text": "量化模型的体积对比必须用实际落盘字节数，不能拿参数个数乘位宽去估。文件里还有对齐填充和元数据，估算值和实际值能差几个百分点。",
+    "metadata": { "topic": "quantization", "lang": "zh" }
+  }
+]

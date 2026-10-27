@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>seekdb 边缘知识库 · 端侧向量 + 库内混合检索</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header>
+  <h1>seekdb <span>边缘知识库</span></h1>
+  <p class="sub">文档不出本机 · 向量在浏览器里算 · 向量与全文的融合在数据库里做</p>
+  <div class="badges">
+    <span class="badge" id="badge-device"><i class="dot"></i>推理后端 <b>未加载</b></span>
+    <span class="badge" id="badge-model"><i class="dot"></i>模型 <b>all-MiniLM-L6-v2 · INT8</b></span>
+    <span class="badge" id="badge-db"><i class="dot"></i>seekdb <b>连接中…</b></span>
+    <span class="badge" id="badge-docs"><i class="dot"></i>已入库 <b>0</b></span>
+  </div>
+</header>
+
+<main>
+  <!-- ===== 左：导入 ===== -->
+  <section class="pane">
+    <h2><em>1</em>导入文档</h2>
+
+    <div class="row">
+      <button id="btn-load" class="primary">加载端侧模型</button>
+      <button id="btn-samples" disabled>导入内置语料</button>
+    </div>
+
+    <div class="progress" id="prog"><i></i></div>
+
+    <textarea id="paste" placeholder="也可以粘贴任意文本（中文/英文），切块后同样在浏览器里算向量。"></textarea>
+    <button id="btn-paste" disabled>导入这段文本</button>
+
+    <p class="hint">
+      模型从本服务 <code>/models/</code> 加载，运行期不访问任何远端推理接口；
+      文档原文只用于<b>本进程内</b>写入 seekdb，不上传第三方。
+    </p>
+
+    <div class="log" id="log"></div>
+  </section>
+
+  <!-- ===== 右：检索 ===== -->
+  <section class="pane">
+    <h2><em>2</em>混合检索</h2>
+
+    <div class="row">
+      <input type="text" id="q" placeholder="例如：HNSW 的 ef_construction 调大会怎样" disabled>
+      <button id="btn-search" class="primary" disabled>检索</button>
+    </div>
+
+    <div class="hits" id="hits">
+      <p class="hint" id="placeholder">先加载模型并导入语料。</p>
+    </div>
+  </section>
+</main>
+
+<!-- ===== 计时 ===== -->
+<section class="timing">
+  <h2>分阶段实测耗时</h2>
+  <table>
+    <thead>
+      <tr><th>阶段</th><th>耗时</th><th>说明</th></tr>
+    </thead>
+    <tbody id="timing-body">
+      <tr><td colspan="3" class="empty">尚未运行</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<details class="tech" id="backend-panel">
+  <summary>后端实测：本机 WebGPU 与 WASM 的延迟对照（6 组 × 12 次，首次与稳态分开报）</summary>
+  <div class="matrix" id="backend-body">加载中…</div>
+</details>
+
+<details class="tech">
+  <summary>技术对照：本次查询的全文通道构造 &amp; 数据库返回的原始信号</summary>
+  <div class="body" id="tech-body">尚未运行</div>
+</details>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

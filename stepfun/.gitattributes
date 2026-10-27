@@ -1,0 +1,7 @@
+# 统一 LF：本机 core.autocrlf=true 会把检出的文本文件转成 CRLF，
+# 一旦有按字节校验的断言（sha256 / content-length 比对）就会假失败。
+* text=auto eol=lf
+
+*.png binary
+*.onnx binary
+*.wasm binary

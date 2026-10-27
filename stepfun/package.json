@@ -1,0 +1,16 @@
+{
+  "name": "seekdb-edge-kb",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "浏览器端本地向量化 + seekdb 原生混合检索的迷你知识库（OceanBase 2026 生态赛道 · 阶跃星辰）",
+  "scripts": {
+    "model": "node scripts/fetch-model.mjs",
+    "start": "node server/index.mjs",
+    "bench": "node scripts/bench.mjs"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.7.5",
+    "seekdb": "^1.4.0"
+  }
+}
