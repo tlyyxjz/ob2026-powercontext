@@ -820,7 +820,13 @@ class ArtifactProcessingSupervisor:
                         if row.scope_id not in state.queued
                         and row.scope_id not in state.running
                         and row.scope_id not in state.retries
-                        and row.last_auto_scan_generation != persisted.scan_generation
+                        # A Scope stays eligible for this scan until it is
+                        # settled, which happens only once nothing is left past
+                        # its cursor. ``source_window_limit`` bounds one
+                        # invocation, so input a threshold admitted past the first
+                        # window must be able to start the next one without a new
+                        # capture, an elapsed interval or an explicit flush.
+                        and row.last_auto_scan_generation < persisted.scan_generation
                     )
                     eligible = frozenset(candidates)
                     if candidates and binding.automatic_scope_filter is not None:
@@ -1115,6 +1121,17 @@ class ArtifactProcessingSupervisor:
                             else self._tracing.stage("artifact_processing.worker.acknowledge", attributes=attributes)
                         ):
                             await self._verify_acknowledgement(assignment)
+                        # One invocation consumes one bounded window. A Scope
+                        # with nothing left past its cursor is done for this
+                        # scan; the one with a remainder stays eligible so the
+                        # next window starts on its own. A failure to record
+                        # this is not a failure of the invocation: the
+                        # acknowledgement is durable and the next capture
+                        # republishes the Scope.
+                        try:
+                            await self._settle_scan(assignment)
+                        except Exception as error:
+                            self._log_failure(None, assignment, error, "count_settle")
                     elif span is not None:
                         span.set_outcome(completion.outcome.value)
                     return completion
@@ -1126,8 +1143,35 @@ class ArtifactProcessingSupervisor:
                     await _complete_spawn_cleanup(cleanup)
                 raise
 
+    async def _settle_scan(self, assignment: ArtifactProcessingWorkAssignment) -> None:
+        """Settle the Scope when the invocation left nothing past its cursor.
+
+        The acknowledgement of a bounded window advances the cursor over exactly
+        that window, so a Scope with input left is unsettled and its next window
+        is admitted by the same scan. Only an empty remainder ends the scan's
+        work for the Scope, which is what stops discovery from revisiting it.
+        """
+
+        async with self._database.transaction() as connection:
+            await self._leases.require_fence(connection, assignment.fence)
+            state = await self._binding_states.load(connection, assignment.binding_name)
+            if state is None or not state.scan_in_progress:
+                return
+            heads = SOURCE_JOURNAL_HEADS_TABLE
+            high = await connection.scalar(select(heads.c.position).where(heads.c.scope_id == assignment.scope_id))
+            if high is None:
+                return
+            cursor = await SourceCursorRepository().load(
+                connection, assignment.scope_id, assignment.binding_name
+            )
+            consumed = 0 if cursor is None else int(cursor.cursor.sequence)
+            if int(high) > consumed:
+                return
+            await self._intents.settle_scan(
+                connection, assignment.scope_id, assignment.binding_name, state.scan_generation
+            )
+
     def _log_completion_hold(
-        self,
         binding: ArtifactProcessingBinding,
         assignment: ArtifactProcessingWorkAssignment,
         completion: ArtifactProcessingWorkerCompletion,

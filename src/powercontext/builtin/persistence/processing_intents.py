@@ -207,6 +207,42 @@ class ArtifactProcessingIntentRepository:
         )
         return cast(StoredArtifactProcessingIntent, await self.load(connection, scope_id, binding_name))
 
+    async def settle_scan(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        binding_name: str,
+        scan_generation: int,
+        /,
+    ) -> StoredArtifactProcessingIntent | None:
+        """Record that the frozen scan has no work left for this Scope.
+
+        Admission no longer ends a Scope's eligibility for a scan, because a
+        bounded window may leave input behind. ``last_auto_scan_generation`` is
+        what ends it, and it is written here rather than in ``admit`` so that the
+        value means "this scan ran to an empty remainder" instead of "this scan
+        looked at the Scope once". A later window of the same scan therefore
+        stays reachable until the Scope is drained.
+        """
+
+        _require_nonnegative("scan_generation", scan_generation)
+        current = await self.load(connection, scope_id, binding_name, for_update=True)
+        if current is None:
+            return None
+        if current.last_auto_scan_generation >= scan_generation:
+            return current
+        if current.requested_generation > current.handled_generation:
+            # An invocation is still outstanding; the Scope is not settled and
+            # its successor decides again once that invocation acknowledges.
+            return current
+        table = ARTIFACT_PROCESSING_INTENTS_TABLE
+        await connection.execute(
+            update(table)
+            .where(table.c.scope_id == scope_id, table.c.binding_name == binding_name)
+            .values(last_auto_scan_generation=scan_generation)
+        )
+        return cast(StoredArtifactProcessingIntent, await self.load(connection, scope_id, binding_name))
+
     async def scan(
         self,
         connection: AsyncConnection,
@@ -278,15 +314,22 @@ class ArtifactProcessingIntentRepository:
         if current.pending_sequence > int(state["scan_upper_pending_sequence"] or 0):
             raise InvalidRepositoryArgumentError("scope_id", "automatic member is outside the frozen scan")
         if current.last_auto_scan_generation >= scan_generation:
+            # A Scope is ineligible for a scan only once that scan's work for it
+            # ran to an empty remainder, which ``settle_scan`` records. Admission
+            # alone does not end it: a bounded window that left input behind must
+            # start the next window without a new capture, an interval or a flush.
             return current
         requested = current.requested_generation
         if current.dirty_generation > current.clean_generation and requested == current.handled_generation:
             requested += 1
         table = ARTIFACT_PROCESSING_INTENTS_TABLE
+        # ``last_auto_scan_generation`` is not written here on purpose: it means
+        # "this scan drained the Scope", and writing it at admission would make
+        # every later window of the same scan unreachable.
         await connection.execute(
             update(table)
             .where(table.c.scope_id == scope_id, table.c.binding_name == binding_name)
-            .values(requested_generation=requested, last_auto_scan_generation=scan_generation)
+            .values(requested_generation=requested)
         )
         return cast(StoredArtifactProcessingIntent, await self.load(connection, scope_id, binding_name))
 

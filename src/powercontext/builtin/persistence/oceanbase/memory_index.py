@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pyobvector import VECTOR, VectorIndex
 from sqlalchemy import (
     BigInteger,
@@ -109,8 +111,14 @@ LIMIT :candidate_limit
 # ``entry_id`` therefore completes the text ordering, while the vector side keeps its
 # own approximate ordering: ``l2_distance(...) APPROXIMATE`` must stay adjacent to the
 # clause that ranks it for the HNSW index to answer the query.
+#
+# Each half is parenthesised because a branch of a ``UNION`` may not carry its own
+# ``ORDER BY``/``LIMIT`` unless it is wrapped. Unwrapped, the ordering is read as
+# belonging to the union itself, which then has no ``LIMIT`` of its own; the branch
+# is also what keeps the two candidate budgets separate, so a cheap text hit rate
+# cannot crowd the approximate vector scan out of a shared ``candidate_limit``.
 _OCEANBASE_HYBRID_SEARCH_SQL = """
-SELECT 'fts' AS channel,
+(SELECT 'fts' AS channel,
     h.memory_artifact_id,
     h.head_revision,
     h.entry_id,
@@ -131,29 +139,38 @@ WHERE h.scope_id = :scope_id
   AND h.memory_artifact_id IN :memory_artifact_ids
   AND MATCH (h.searchable_text) AGAINST (:analyzed_query)
 ORDER BY score DESC, h.entry_id, h.entry_version_id
-LIMIT :candidate_limit
+LIMIT :candidate_limit)
 UNION ALL
-SELECT 'vector' AS channel,
+(SELECT 'vector' AS channel,
     m.memory_artifact_id,
     m.head_revision,
     m.entry_id,
     m.entry_version_id,
     v.text,
-    MATCH (h.searchable_text) AGAINST (:analyzed_query) AS score,
+    f.score,
     l2_distance(m.embedding, :query_vector) AS distance
 FROM pc_memory_vector_entries AS m
-JOIN pc_memory_entry_heads AS h
-  ON h.scope_id = m.scope_id
- AND h.memory_artifact_id = m.memory_artifact_id
- AND h.entry_id = m.entry_id
 JOIN pc_memory_entry_versions AS v
   ON v.scope_id = m.scope_id
  AND v.memory_artifact_id = m.memory_artifact_id
  AND v.entry_version_id = m.entry_version_id
+LEFT JOIN (
+    SELECT h.scope_id,
+        h.memory_artifact_id,
+        h.entry_id,
+        MATCH (h.searchable_text) AGAINST (:analyzed_query) AS score
+    FROM pc_memory_entry_heads AS h
+    WHERE h.scope_id = :scope_id
+      AND h.memory_artifact_id IN :memory_artifact_ids
+      AND MATCH (h.searchable_text) AGAINST (:analyzed_query)
+) AS f
+  ON f.scope_id = m.scope_id
+ AND f.memory_artifact_id = m.memory_artifact_id
+ AND f.entry_id = m.entry_id
 WHERE m.scope_id = :scope_id
   AND m.memory_artifact_id IN :memory_artifact_ids
 ORDER BY l2_distance(m.embedding, :query_vector) APPROXIMATE
-LIMIT :candidate_limit
+LIMIT :candidate_limit)
 """
 
 
@@ -285,6 +302,23 @@ class OceanBaseMemoryFTSIndex:
     ) -> tuple[MemoryProjection, ...]:
         del connection, scope_id
         return projections
+
+
+def _channel_rank_key(row: dict[str, Any]) -> tuple[float, str, str]:
+    """Order one channel's candidates the way the caller reads them.
+
+    Nearest first is the channel's own ranking, and a row the channel did not
+    measure (a text-only hit has no distance) follows the measured ones instead of
+    being compared as a zero. ``entry_id`` keeps equal-ranked rows in one order, so
+    a repeated search returns the same sequence.
+    """
+
+    distance = row.get("distance")
+    return (
+        float("inf") if distance is None else float(distance),
+        str(row["entry_id"]),
+        str(row["entry_version_id"]),
+    )
 
 
 class OceanBaseMemoryVectorIndex:
@@ -510,8 +544,23 @@ class OceanBaseMemoryVectorIndex:
                 },
             )
         ).mappings()
-        fts_rows = [{**row, "distance": None} for row in rows if row["channel"] == "fts"]
-        vector_rows = [{**row, "score": None} for row in rows if row["channel"] == "vector"]
+        # Each row carries both measurements when the row is reachable from both
+        # channels, so fusion can report a candidate as matched by both. Clearing
+        # one of them made a row that both channels retrieved look single-channel,
+        # which the hybrid contract forbids.
+        #
+        # Fusion is positional, so each channel is ordered here rather than trusting
+        # the order the union happened to emit: the caller may repeat a search and
+        # must get the same answer. A text-only row has no vector distance and sorts
+        # last on that key, which is where a missing measurement belongs.
+        fts_rows = sorted(
+            (dict(row) for row in rows if row["channel"] == "fts"),
+            key=_channel_rank_key,
+        )
+        vector_rows = sorted(
+            (dict(row) for row in rows if row["channel"] == "vector"),
+            key=_channel_rank_key,
+        )
         return MemorySearchChannels(
             fts=memory_channel_hits(fts_rows, request.memories),
             vector=memory_channel_hits(vector_rows, request.memories),

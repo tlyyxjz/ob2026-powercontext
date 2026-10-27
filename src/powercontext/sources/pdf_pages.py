@@ -210,6 +210,19 @@ class PDFPageTextEvidenceProjection:
         )
 
 
+# Expanding a term reaches pages that word the concept differently ("capex" versus
+# "capital expenditures"). Those words are common in a financial statement, so an
+# expansion must not weigh as much as the term the question actually used.
+_EXPANSION_WEIGHT = 0.35
+# Distance, in tokens, within which two question terms count as co-occurring. A
+# financial table cell and its row label sit well inside this, while an index entry
+# that merely repeats the words elsewhere on the page does not score the window.
+_PROXIMITY_WIDTH = 12
+# Word boundary used by the published tokenisation rule, so proximity is measured on
+# the same tokens the quality thresholds are defined over.
+_TOKEN = re.compile(r"[a-z]+|\d+")
+
+
 async def search_pdf_pages(memory: object, question: str, limit: int = 10) -> tuple[MemoryCitation, ...]:
     """Return citations whose pages are all distinct exact pages.
 
@@ -226,12 +239,12 @@ async def search_pdf_pages(memory: object, question: str, limit: int = 10) -> tu
 
     Single terms alone are too weak on their own: a report prints "operating" on
     hundreds of pages, so a page that merely repeats one word outranks the page
-    that states the figure. The offline query pass therefore also asks for short
-    phrases built from consecutive question terms. A phrase keeps the ordering and
-    adjacency the question itself chose ("net sales", "capital expenditures"),
-    which is what separates the statement page from the index page that lists the
-    same words apart. The two passes are fused by rank, so a page found by both is
-    ranked above a page that only one pass happened to score highly.
+    that states the figure. The lexical search reports an OR over its query, so
+    asking for a phrase does not make adjacency available - it only lowers the term
+    coverage the query needs, which lets index pages through. Adjacency is therefore
+    recovered after recall instead: the recalled pages are read back and ranked by
+    how many distinct question terms share one token window, so a statement row and
+    its label outrank a page that prints the same words far apart.
 
     Retrieval ranks entries, not pages, so a document may contribute several hits that
     resolve to the same page. The returned citation tuple never does: each accepted
@@ -244,23 +257,25 @@ async def search_pdf_pages(memory: object, question: str, limit: int = 10) -> tu
         raise ValueError("limit must be a positive integer")
 
     depth = max(limit * 10, _MIN_TERM_DEPTH)
-    rankings: list[tuple[str, ...]] = []
+    scores: dict[str, float] = {}
     first_hit: dict[str, object] = {}
-    for terms in _query_passes(question):
-        scores: dict[str, float] = {}
-        for term in terms:
-            page = await memory.search(SearchMemoryRequest(query=term, mode="fts", limit=depth))
-            for hit in page.hits:
-                # Accumulate within a pass: a page that matches several question terms
-                # supports the answer better than one that matches a single term once.
-                scores[hit.entry_id] = scores.get(hit.entry_id, 0.0) + float(hit.score)
-                first_hit.setdefault(hit.entry_id, hit)
-        if scores:
-            rankings.append(tuple(sorted(scores, key=lambda entry_id: scores[entry_id], reverse=True)))
+    for rank, term in enumerate(_query_terms(question)):
+        page = await memory.search(SearchMemoryRequest(query=term, mode="fts", limit=depth))
+        # The first term is the question's own wording; expansions only make a page
+        # reachable and must not outvote the word the caller actually used.
+        weight = 1.0 if rank == 0 else _EXPANSION_WEIGHT
+        for hit in page.hits:
+            scores[hit.entry_id] = scores.get(hit.entry_id, 0.0) + weight * float(hit.score)
+            first_hit.setdefault(hit.entry_id, hit)
+
+    question_terms = frozenset(_query_terms(question))
+    ranked = _order_by_proximity(
+        await _page_texts(memory, first_hit, scores), question_terms, scores
+    )
 
     citations: list[MemoryCitation] = []
     claimed: set[tuple[str, ...]] = set()
-    for entry_id in _reciprocal_rank_fusion(rankings):
+    for entry_id in ranked:
         if len(citations) >= limit:
             break
         hit = first_hit[entry_id]
@@ -280,20 +295,83 @@ async def search_pdf_pages(memory: object, question: str, limit: int = 10) -> tu
     return tuple(citations)
 
 
-def _reciprocal_rank_fusion(rankings: Sequence[Sequence[str]]) -> tuple[str, ...]:
-    """Merge per-pass rankings without letting one pass's score scale dominate.
+async def _page_texts(
+    memory, first_hit: dict[str, object], scores: dict[str, float]
+) -> dict[str, str]:
+    """Read the recalled pages' own text, which is what proximity is measured on.
 
-    Each pass contributes ``1 / (RRF_OFFSET + rank)`` per entry, so a page ranked
-    highly by the phrase pass and by the term pass wins over a page that only one
-    pass happened to score highly, no matter how different the two raw score
-    ranges are.
+    A page that cannot be read must still be orderable: dropping it here would
+    silently shrink the candidate set and could cost a required page, so an
+    unreadable page is represented by its empty text and keeps its lexical rank.
     """
 
-    fused: dict[str, float] = {}
-    for ranking in rankings:
-        for rank, entry_id in enumerate(ranking):
-            fused[entry_id] = fused.get(entry_id, 0.0) + 1.0 / (_RRF_OFFSET + rank)
-    return tuple(sorted(fused, key=lambda entry_id: (-fused[entry_id], entry_id)))
+    texts: dict[str, str] = {}
+    for entry_id in scores:
+        hit = first_hit[entry_id]
+        try:
+            entry = await memory.get(
+                GetMemoryEntryRequest(
+                    citation=MemoryCitation(
+                        memory_ref=hit.memory_ref,
+                        entry_id=hit.entry_id,
+                        entry_version_id=hit.entry_version_id,
+                    )
+                )
+            )
+        except Exception:  # noqa: BLE001 - unreadable pages keep their lexical rank
+            texts[entry_id] = ""
+            continue
+        text = getattr(entry.entry, "text", "")
+        texts[entry_id] = text if isinstance(text, str) else ""
+    return texts
+
+
+def _order_by_proximity(
+    texts: dict[str, str], terms: frozenset[str], scores: dict[str, float]
+) -> tuple[str, ...]:
+    """Order recalled pages by how tightly the question's terms co-occur in them.
+
+    Counting term matches alone cannot tell a statement row from an index page
+    that prints the same words in a different layout, and the lexical search
+    reports an OR over terms, so a page carrying one common word can outrank the
+    page that actually answers the question. Rewarding pages where several
+    distinct question terms share one window restores that distinction.
+
+    The window is the primary key, but it collapses ties harshly - a page whose
+    question terms all sit near each other scores the same as one that merely
+    carries them - so lexical score and page length break ties in that order.
+    """
+
+    scored: list[tuple[int, float, int, str]] = []
+    for entry_id, text in texts.items():
+        window = _term_window(_TOKEN.findall(text.lower()), terms)
+        scored.append((-window, -scores.get(entry_id, 0.0), -len(text), entry_id))
+    scored.sort()
+    return tuple(entry_id for _, _, _, entry_id in scored)
+
+
+def _term_window(tokens: Sequence[str], terms: frozenset[str], width: int = _PROXIMITY_WIDTH) -> int:
+    """Return the most distinct question terms seen inside one token window.
+
+    The window is anchored on a term occurrence and extends ``width`` tokens in
+    either direction, so it always contains at least its own anchor - hence the
+    floor of 1, which is also the value a page that matches nothing must report.
+    """
+
+    positions: dict[str, list[int]] = {}
+    for index, token in enumerate(tokens):
+        if token in terms:
+            positions.setdefault(token, []).append(index)
+    best = 1 if positions else 0
+    for anchor in (spot for spots in positions.values() for spot in spots):
+        covered = sum(
+            1
+            for others in positions.values()
+            if any(anchor - width <= spot <= anchor + width for spot in others)
+        )
+        if covered > best:
+            best = covered
+    return best
 
 
 class _PageQueryTerms:
@@ -311,7 +389,21 @@ class _PageQueryTerms:
         # never prints the ratio name the question uses.
         "capex": ("capital", "expenditures"),
         "ebitda": ("operating", "income", "depreciation", "amortization"),
-        "geographies": ("geographic", "geography", "region", "regions", "worldwide", "international", "global"),
+        # A 10-K answers "geographies" with "countries and territories" and with
+        # its reportable divisions, and never with the noun the question used, so
+        # the wording that actually carries the answer has to be reachable too.
+        "geographies": (
+            "geographic",
+            "geography",
+            "region",
+            "regions",
+            "worldwide",
+            "international",
+            "global",
+            "countries",
+            "territories",
+            "divisions",
+        ),
         "battles": ("proceedings", "litigation", "contingencies"),
         "margin": ("operating", "profit", "gross"),
         "restructuring": ("charges", "costs"),
@@ -350,44 +442,18 @@ class _PageQueryTerms:
 
 _query_terms = _PageQueryTerms()
 _MIN_TERM_DEPTH = 200
-# Fusion offset: a pass that ranks an entry first contributes 1/1, and the decay is
-# steep enough that "second in two passes" still beats "first in one pass".
-_RRF_OFFSET = 1
-# Consecutive question terms above this count make a phrase too specific for a
-# statement page, which words its headings differently from the question.
-_MAX_PHRASE_TERMS = 3
 
 
 def _query_passes(question: str) -> tuple[tuple[str, ...], ...]:
-    """Return the ordered offline query passes this implementation searches.
+    """Return the terms this implementation searches, in scoring order.
 
-    The first pass is the single-term decomposition that makes a figure-bearing page
-    reachable at all. The second asks for adjacent-term phrases, which keeps the
-    question's own word order and is what tells a statement row apart from an index
-    page that happens to carry the same words in a different layout.
+    Kept as a one-pass sequence because the lexical search reports an OR over its
+    query, so asking for several words at once does not make phrase adjacency
+    available. Page-level proximity after recall is what recovers adjacency.
     """
 
-    passes: list[tuple[str, ...]] = []
     terms = _query_terms(question)
-    if terms:
-        passes.append(terms)
-    phrases = _query_phrases(question)
-    if phrases:
-        passes.append(phrases)
-    return tuple(passes)
-
-
-def _query_phrases(question: str) -> tuple[str, ...]:
-    """Build ordered phrases from contiguous question terms, longest first."""
-
-    content = [token for token in _PageQueryTerms._WORD.findall(question.lower()) if token not in _PageQueryTerms._STOP]
-    phrases: list[str] = []
-    for size in range(min(_MAX_PHRASE_TERMS, len(content)), 1, -1):
-        for start in range(len(content) - size + 1):
-            phrase = " ".join(content[start : start + size])
-            if phrase not in phrases:
-                phrases.append(phrase)
-    return tuple(phrases)
+    return (terms,) if terms else ()
 
 
 PDF_PAGE_SOURCE_ADAPTER = PDFPageSourceAdapter()
