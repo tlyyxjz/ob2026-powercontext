@@ -220,6 +220,10 @@ async def main() -> int:
     channel_sizes: list[tuple[int, int]] = []
     vector_marked = 0
     total_hits = 0
+    duplicate_identities = 0
+    empty_matched_by = 0
+    stale_text = 0
+    unstable = 0
     explain = ""
 
     database = WORK / "db-hybrid"
@@ -262,6 +266,28 @@ async def main() -> int:
                         vector_marked += 1
                 channel_sizes.append((len(fts_only.hits), len(vector_only.hits)))
 
+                # Hit validity: every hit must carry a channel mark, be a distinct
+                # identity and carry text byte-identical to a stored entry.
+                identities = [
+                    (hit.memory_ref.artifact_id, hit.memory_ref.revision, hit.entry_id, hit.entry_version_id)
+                    for hit in result.hits
+                ]
+                if len(set(identities)) != len(identities):
+                    duplicate_identities += 1
+                if any(not hit.matched_by for hit in result.hits):
+                    empty_matched_by += 1
+                if any(hit.text not in inverse for hit in result.hits):
+                    stale_text += 1
+
+                # Stability: the same path must answer the same way when repeated.
+                again = await memory.search(question, memories=(head,), mode="hybrid", limit=LIMIT)
+                repeat = [
+                    (hit.memory_ref.artifact_id, hit.memory_ref.revision, hit.entry_id, hit.entry_version_id)
+                    for hit in again.hits
+                ]
+                if repeat != identities:
+                    unstable += 1
+
         native: list[tuple[str, object]] = []
         with captured() as statements:
             await heads[0][1].search(selected[0][1], memories=(heads[0][2],), mode="hybrid", limit=LIMIT)
@@ -293,6 +319,10 @@ async def main() -> int:
         "channel_budget": CHANNEL,
         "mean_channel_rows": [round(statistics.fmean(c[0] for c in channel_sizes), 1), round(statistics.fmean(c[1] for c in channel_sizes), 1)],
         "hits_matched_by_vector": f"{vector_marked}/{total_hits}",
+        "searches_with_duplicate_identity": duplicate_identities,
+        "searches_with_empty_matched_by": empty_matched_by,
+        "searches_with_stale_text": stale_text,
+        "searches_unstable_on_repeat": unstable,
         "explain_has_text_retrieval_scan": "TEXT RETRIEVAL SCAN" in explain,
         "explain_has_vector_index": "VECTOR INDEX" in explain,
     }
