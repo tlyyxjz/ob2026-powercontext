@@ -224,6 +224,15 @@ async def search_pdf_pages(memory: object, question: str, limit: int = 10) -> tu
     per-entry scores are accumulated. Term-level search is what lets a page that
     supports the answer surface even though it does not repeat the question.
 
+    Single terms alone are too weak on their own: a report prints "operating" on
+    hundreds of pages, so a page that merely repeats one word outranks the page
+    that states the figure. The offline query pass therefore also asks for short
+    phrases built from consecutive question terms. A phrase keeps the ordering and
+    adjacency the question itself chose ("net sales", "capital expenditures"),
+    which is what separates the statement page from the index page that lists the
+    same words apart. The two passes are fused by rank, so a page found by both is
+    ranked above a page that only one pass happened to score highly.
+
     Retrieval ranks entries, not pages, so a document may contribute several hits that
     resolve to the same page. The returned citation tuple never does: each accepted
     citation is dropped as soon as its page identity was already claimed.
@@ -234,24 +243,27 @@ async def search_pdf_pages(memory: object, question: str, limit: int = 10) -> tu
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         raise ValueError("limit must be a positive integer")
 
-    terms = _query_terms(question)
     depth = max(limit * 10, _MIN_TERM_DEPTH)
-    scores: dict[str, float] = {}
-    best: dict[str, object] = {}
-    for term in terms:
-        page = await memory.search(SearchMemoryRequest(query=term, mode="fts", limit=depth))
-        for hit in page.hits:
-            # Accumulate across terms: a page that matches several question terms
-            # supports the answer better than one that matches a single term once.
-            scores[hit.entry_id] = scores.get(hit.entry_id, 0.0) + float(hit.score)
-            best.setdefault(hit.entry_id, hit)
+    rankings: list[tuple[str, ...]] = []
+    first_hit: dict[str, object] = {}
+    for terms in _query_passes(question):
+        scores: dict[str, float] = {}
+        for term in terms:
+            page = await memory.search(SearchMemoryRequest(query=term, mode="fts", limit=depth))
+            for hit in page.hits:
+                # Accumulate within a pass: a page that matches several question terms
+                # supports the answer better than one that matches a single term once.
+                scores[hit.entry_id] = scores.get(hit.entry_id, 0.0) + float(hit.score)
+                first_hit.setdefault(hit.entry_id, hit)
+        if scores:
+            rankings.append(tuple(sorted(scores, key=lambda entry_id: scores[entry_id], reverse=True)))
 
     citations: list[MemoryCitation] = []
     claimed: set[tuple[str, ...]] = set()
-    for entry_id, _ in sorted(scores.items(), key=lambda item: item[1], reverse=True):
+    for entry_id in _reciprocal_rank_fusion(rankings):
         if len(citations) >= limit:
             break
-        hit = best[entry_id]
+        hit = first_hit[entry_id]
         citation = MemoryCitation(
             memory_ref=hit.memory_ref,
             entry_id=hit.entry_id,
@@ -266,6 +278,22 @@ async def search_pdf_pages(memory: object, question: str, limit: int = 10) -> tu
         claimed.add(identities)
         citations.append(citation)
     return tuple(citations)
+
+
+def _reciprocal_rank_fusion(rankings: Sequence[Sequence[str]]) -> tuple[str, ...]:
+    """Merge per-pass rankings without letting one pass's score scale dominate.
+
+    Each pass contributes ``1 / (RRF_OFFSET + rank)`` per entry, so a page ranked
+    highly by the phrase pass and by the term pass wins over a page that only one
+    pass happened to score highly, no matter how different the two raw score
+    ranges are.
+    """
+
+    fused: dict[str, float] = {}
+    for ranking in rankings:
+        for rank, entry_id in enumerate(ranking):
+            fused[entry_id] = fused.get(entry_id, 0.0) + 1.0 / (_RRF_OFFSET + rank)
+    return tuple(sorted(fused, key=lambda entry_id: (-fused[entry_id], entry_id)))
 
 
 class _PageQueryTerms:
@@ -322,6 +350,44 @@ class _PageQueryTerms:
 
 _query_terms = _PageQueryTerms()
 _MIN_TERM_DEPTH = 200
+# Fusion offset: a pass that ranks an entry first contributes 1/1, and the decay is
+# steep enough that "second in two passes" still beats "first in one pass".
+_RRF_OFFSET = 1
+# Consecutive question terms above this count make a phrase too specific for a
+# statement page, which words its headings differently from the question.
+_MAX_PHRASE_TERMS = 3
+
+
+def _query_passes(question: str) -> tuple[tuple[str, ...], ...]:
+    """Return the ordered offline query passes this implementation searches.
+
+    The first pass is the single-term decomposition that makes a figure-bearing page
+    reachable at all. The second asks for adjacent-term phrases, which keeps the
+    question's own word order and is what tells a statement row apart from an index
+    page that happens to carry the same words in a different layout.
+    """
+
+    passes: list[tuple[str, ...]] = []
+    terms = _query_terms(question)
+    if terms:
+        passes.append(terms)
+    phrases = _query_phrases(question)
+    if phrases:
+        passes.append(phrases)
+    return tuple(passes)
+
+
+def _query_phrases(question: str) -> tuple[str, ...]:
+    """Build ordered phrases from contiguous question terms, longest first."""
+
+    content = [token for token in _PageQueryTerms._WORD.findall(question.lower()) if token not in _PageQueryTerms._STOP]
+    phrases: list[str] = []
+    for size in range(min(_MAX_PHRASE_TERMS, len(content)), 1, -1):
+        for start in range(len(content) - size + 1):
+            phrase = " ".join(content[start : start + size])
+            if phrase not in phrases:
+                phrases.append(phrase)
+    return tuple(phrases)
 
 
 PDF_PAGE_SOURCE_ADAPTER = PDFPageSourceAdapter()
