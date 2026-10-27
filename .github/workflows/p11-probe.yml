@@ -1,0 +1,34 @@
+name: p11-probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 2026-competition
+    paths:
+      - ".github/workflows/p11-probe.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    name: p11-hybrid-vs-frozen
+    env:
+      PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/competition
+      PYTHONDONTWRITEBYTECODE: "1"
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install locked competition dependencies
+        run: python -m pip install -r competition/requirements.txt
+      - name: Report pypdf / pylibseekdb versions
+        run: |
+          python -c "import pypdf; print('pypdf', pypdf.__version__)"
+          python -c "import pylibseekdb; print('pylibseekdb ok')"
+      - name: Compare hybrid against the frozen dual path
+        run: python competition/selftest_support/p11_probe.py
