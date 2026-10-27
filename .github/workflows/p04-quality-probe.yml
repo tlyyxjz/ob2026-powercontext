@@ -2,6 +2,11 @@ name: p04-quality-probe
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - 2026-competition
+    paths:
+      - ".github/workflows/p04-quality-probe.yml"
 
 permissions:
   contents: read
