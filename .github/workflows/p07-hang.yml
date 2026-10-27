@@ -1,0 +1,35 @@
+name: p07-hang
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 2026-competition
+    paths:
+      - ".github/workflows/p07-hang.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  hang:
+    runs-on: ubuntu-24.04
+    name: p07-hang-stack
+    env:
+      PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/competition
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONFAULTHANDLER: "1"
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install locked competition dependencies
+        run: python -m pip install -r competition/requirements.txt
+      - name: Dump every thread stack if the count-trigger acceptance hangs
+        run: |
+          timeout -s SIGABRT 300 python -m pytest \
+            competition/challenges/processing-01-count-trigger/acceptance \
+            -q -x -p no:cacheprovider 2>&1 | tail -120
+          echo "pytest exit: ${PIPESTATUS[0]}"
