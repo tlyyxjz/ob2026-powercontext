@@ -53,8 +53,13 @@ _CITATION_TYPES: dict[str, type[SourceRef] | type[MemoryCitation] | type[Artifac
 }
 
 
-class SourceLifecycleError(RuntimeError):
-    """Reject a lifecycle operation that would corrupt the dependency graph."""
+class SourceLifecycleError(ValueError):
+    """Reject a lifecycle operation that would corrupt the dependency graph.
+
+    The published contract is ``SourceLifecycleError(ValueError)``: callers
+    guard these rejections with ``except ValueError``, so the base class is
+    part of the interface rather than an implementation detail.
+    """
 
     def __init__(self, code: str) -> None:
         super().__init__(code)
