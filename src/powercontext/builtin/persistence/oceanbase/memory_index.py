@@ -305,7 +305,7 @@ class OceanBaseMemoryFTSIndex:
 
 
 def _channel_rank_key(row: dict[str, Any]) -> tuple[float, str, str]:
-    """Order one vector channel candidate the way the caller reads it.
+    """Order one channel's candidates the way the caller reads them.
 
     Nearest first is the channel's own ranking, and a row the channel did not
     measure (a text-only hit has no distance) follows the measured ones instead of
@@ -316,25 +316,6 @@ def _channel_rank_key(row: dict[str, Any]) -> tuple[float, str, str]:
     distance = row.get("distance")
     return (
         float("inf") if distance is None else float(distance),
-        str(row["entry_id"]),
-        str(row["entry_version_id"]),
-    )
-
-
-def _fts_rank_key(row: dict[str, Any]) -> tuple[float, str, str]:
-    """Order one lexical channel candidate by its own text score.
-
-    The lexical branch of the hybrid statement ranks with ``MATCH(...) AGAINST(...)``
-    descending, and that ordering is the channel's evidence: re-ordering the same rows
-    on the vector distance replaces term evidence with embedding proximity, so the
-    fusion's positional ranks for the lexical channel no longer reflect why the row
-    matched. A row the branch did not score follows the scored ones, and ``entry_id``
-    keeps equal scores in one order, so a repeated search returns the same sequence.
-    """
-
-    score = row.get("score")
-    return (
-        -float(score) if score is not None else float("inf"),
         str(row["entry_id"]),
         str(row["entry_version_id"]),
     )
@@ -580,7 +561,7 @@ class OceanBaseMemoryVectorIndex:
         # last on that key, which is where a missing measurement belongs.
         fts_rows = sorted(
             (dict(row) for row in candidates if row["channel"] == "fts"),
-            key=_fts_rank_key,
+            key=_channel_rank_key,
         )
         vector_rows = sorted(
             (dict(row) for row in candidates if row["channel"] == "vector"),
