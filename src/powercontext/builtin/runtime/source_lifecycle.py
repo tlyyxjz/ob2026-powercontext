@@ -28,9 +28,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import insert, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.exc import IntegrityError
@@ -67,7 +67,14 @@ class SourceLifecycleError(ValueError):
 
 
 class SourceLifecycleEvent(BaseModel):
-    """One ordered availability observation for a registered root Source."""
+    """One ordered availability observation for a registered root Source.
+
+    The published field contract is a strict one: ``node_id`` and ``reason`` are
+    non-empty and not whitespace-only, ``revision`` and ``sequence`` are positive
+    integers, and ``available`` is a boolean. Each is checked before Pydantic's
+    coercion so a truthy string or an integer dressed as a boolean cannot pass
+    as the declared type.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -76,6 +83,29 @@ class SourceLifecycleEvent(BaseModel):
     sequence: int = Field(ge=1)
     available: bool
     reason: str = Field(min_length=1)
+
+    @field_validator("node_id", "reason", mode="before")
+    @classmethod
+    def reject_blank_text(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("must be non-empty and not whitespace-only")  # noqa: TRY003
+        return value
+
+    @field_validator("revision", "sequence", mode="before")
+    @classmethod
+    def reject_non_strict_positive_integer(cls, value: Any) -> Any:
+        # bool is an int subclass, and a float or numeric string coerces cleanly;
+        # none of them is a positive integer in the declared sense.
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("must be a positive integer")  # noqa: TRY003
+        return value
+
+    @field_validator("available", mode="before")
+    @classmethod
+    def reject_non_boolean(cls, value: Any) -> Any:
+        if not isinstance(value, bool):
+            raise ValueError("must be a boolean")  # noqa: TRY003
+        return value
 
 
 class LifecycleNode(BaseModel):
@@ -91,6 +121,10 @@ class LifecycleNode(BaseModel):
     available: bool = True
     sequence: int = Field(default=0, ge=0)
     citation: LifecycleCitation
+    # A recorded transition is only half done until its activation has reached the
+    # native Memory entries. Persisting that step lets the same event be retried
+    # after a failed propagation instead of being mistaken for a completed replay.
+    propagated: bool = True
 
 
 def active_nodes(nodes: tuple[LifecycleNode, ...]) -> frozenset[str]:
@@ -241,6 +275,7 @@ def encode_nodes(nodes: tuple[LifecycleNode, ...]) -> bytes:
                 "policy": node.policy,
                 "available": node.available,
                 "sequence": node.sequence,
+                "propagated": node.propagated,
                 "citation": node.citation.model_dump(mode="json"),
             }
             for node in nodes
@@ -276,6 +311,9 @@ def decode_nodes(payload: object) -> tuple[LifecycleNode, ...]:
                     available=bool(row.get("available", True)),
                     sequence=row.get("sequence", 0),
                     citation=citation_type.model_validate(row["citation"]),
+                    # Documents written before this field existed only recorded
+                    # transitions that had already propagated, so read them as done.
+                    propagated=bool(row.get("propagated", True)),
                 )
             )
         except (KeyError, TypeError, ValueError) as error:
@@ -347,6 +385,7 @@ class ScopedSourceLifecycle:
     async def apply(self, event: SourceLifecycleEvent) -> list[str]:
         async with self._runtime._context(self.scope_id) as context:  # type: ignore[attr-defined]
             async with self._runtime._locked(self.scope_id):  # type: ignore[attr-defined]
+                transitioned = False  # a new observation was recorded and now needs propagating
                 async with self._store.database.transaction() as connection:  # type: ignore[union-attr]
                     nodes, generation = await self._store.load(connection, self.scope_id)
                     index = {node.node_id: node for node in nodes}
@@ -362,21 +401,53 @@ class ScopedSourceLifecycle:
                     if event.sequence == node.sequence:
                         if event.available != node.available:
                             raise SourceLifecycleError("conflicting-observation")
-                        # An identical observation is an idempotent replay: report the
-                        # current activation without rewriting Memory or the graph.
-                        return sorted(active_nodes(nodes))
-                    updated = tuple(
-                        item.model_copy(
-                            update={"available": event.available, "sequence": event.sequence},
+                        if node.propagated:
+                            # A completed replay: report the current activation
+                            # without rewriting Memory or the graph.
+                            return sorted(active_nodes(nodes))
+                        # The recorded transition never reached the Memory entries.
+                        # Re-running it is what the retry contract asks for.
+                        transitioned = True
+                        updated = nodes
+                    else:
+                        transitioned = True
+                        updated = tuple(
+                            item.model_copy(
+                                update={
+                                    "available": event.available,
+                                    "sequence": event.sequence,
+                                    "propagated": False,
+                                },
+                            )
+                            if item.node_id == node.node_id
+                            else item
+                            for item in nodes
                         )
-                        if item.node_id == node.node_id
-                        else item
-                        for item in nodes
-                    )
                     active = active_nodes(updated)
                     await self._store.save(connection, self.scope_id, updated, generation)
                 await self._apply_memory(context, updated, active)
+                if transitioned:
+                    await self._mark_propagated(event.node_id, event.sequence)
         return sorted(active)
+
+    async def _mark_propagated(self, node_id: str, sequence: int) -> None:
+        """Record that one transition reached the native Memory entries.
+
+        This is a separate commit on purpose: the Memory write owns its own
+        transaction boundary, so the only honest way to say "propagation finished"
+        is to mark it after that write returned.
+        """
+
+        async with self._store.database.transaction() as connection:  # type: ignore[union-attr]
+            nodes, generation = await self._store.load(connection, self.scope_id)
+            updated = tuple(
+                item.model_copy(update={"propagated": True})
+                if item.node_id == node_id and item.sequence == sequence
+                else item
+                for item in nodes
+            )
+            if updated != nodes:
+                await self._store.save(connection, self.scope_id, updated, generation)
 
     async def resolve(self, node_id: str, *, purpose: LifecyclePurpose) -> LifecycleCitation:
         nodes = await self._load()
