@@ -544,6 +544,12 @@ class OceanBaseMemoryVectorIndex:
                 },
             )
         ).mappings()
+        # ``mappings()`` hands back a single-use result: the first pass drains the
+        # cursor, so splitting the channels in two independent passes left the
+        # second one with an empty set and a hybrid hit that both channels
+        # retrieved was always reported as lexical-only. Materialise the candidate
+        # set once and split it twice.
+        candidates = list(rows)
         # Each row carries both measurements when the row is reachable from both
         # channels, so fusion can report a candidate as matched by both. Clearing
         # one of them made a row that both channels retrieved look single-channel,
@@ -554,11 +560,11 @@ class OceanBaseMemoryVectorIndex:
         # must get the same answer. A text-only row has no vector distance and sorts
         # last on that key, which is where a missing measurement belongs.
         fts_rows = sorted(
-            (dict(row) for row in rows if row["channel"] == "fts"),
+            (dict(row) for row in candidates if row["channel"] == "fts"),
             key=_channel_rank_key,
         )
         vector_rows = sorted(
-            (dict(row) for row in rows if row["channel"] == "vector"),
+            (dict(row) for row in candidates if row["channel"] == "vector"),
             key=_channel_rank_key,
         )
         return MemorySearchChannels(

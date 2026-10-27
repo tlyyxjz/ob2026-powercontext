@@ -2616,10 +2616,6 @@ class ScopedMemoryApplication:
             window_limit = self._runtime.source_window_limit if limit is None else limit
             async with self._runtime._locked(self.scope_id):
                 with self._runtime._stage("memory.flush", attributes={}) as span:
-                    # ``limit`` bounds the call, and ``source_window_limit`` is what
-                    # bounds one read; repeating the read here would let a single
-                    # call drain everything past the cursor whatever the caller
-                    # asked for. The count threshold is what admits further calls.
                     result = await context.triggers.flush(limit=window_limit)
                     if span is not None:
                         span.set_attributes({"powercontext.memory.flush.source_count": result.source_count})
