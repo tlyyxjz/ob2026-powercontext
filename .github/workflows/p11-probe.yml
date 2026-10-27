@@ -7,6 +7,7 @@ on:
       - 2026-competition
     paths:
       - ".github/workflows/p11-probe.yml"
+      - "src/powercontext/builtin/persistence/oceanbase/memory_index.py"
 
 permissions:
   contents: read
