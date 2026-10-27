@@ -25,6 +25,10 @@ Two properties are deliberate:
   cancels the shared provider work that other callers still need;
 * a provider failure is delivered to every waiter and cached nowhere, so the next call
   genuinely retries instead of replaying a poisoned result.
+
+The constructor defaults are the published contract (``max_batch_size=64``,
+``coalesce_ms=5.0``, ``cache_size=1024``), not an implementation preference: a caller that
+omits an argument is asking for exactly those numbers.
 """
 
 from __future__ import annotations
@@ -38,6 +42,14 @@ from powercontext.builtin.inference.models import EmbeddingResult, InferenceUsag
 _Vector = tuple[float, ...]
 
 
+def _is_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 class CoalescingEmbeddingModel:
     """Batch and de-duplicate one embedding model behind the same ``embed`` contract."""
 
@@ -46,21 +58,19 @@ class CoalescingEmbeddingModel:
         model: object,
         /,
         *,
-        max_batch_size: int = 8,
-        coalesce_ms: int = 0,
-        cache_size: Optional[int] = None,
+        max_batch_size: int = 64,
+        coalesce_ms: float = 5.0,
+        cache_size: int = 1024,
     ) -> None:
-        if not isinstance(max_batch_size, int) or isinstance(max_batch_size, bool) or max_batch_size < 1:
+        if not _is_int(max_batch_size) or max_batch_size < 1:
             raise ValueError("max_batch_size must be a positive integer")
-        if not isinstance(coalesce_ms, int) or isinstance(coalesce_ms, bool) or coalesce_ms < 0:
-            raise ValueError("coalesce_ms must be a non-negative integer")
-        if cache_size is not None and (
-            not isinstance(cache_size, int) or isinstance(cache_size, bool) or cache_size < 1
-        ):
-            raise ValueError("cache_size must be a positive integer when provided")
+        if not _is_number(coalesce_ms) or coalesce_ms < 0:
+            raise ValueError("coalesce_ms must be a non-negative number")
+        if not _is_int(cache_size) or cache_size < 0:
+            raise ValueError("cache_size must be a non-negative integer")
         self._model = model
         self._max_batch_size = max_batch_size
-        self._coalesce_ms = coalesce_ms
+        self._coalesce_ms = float(coalesce_ms)
         self._cache_size = cache_size
         self._cache: OrderedDict[str, _Vector] = OrderedDict()
         self._pending: dict[str, asyncio.Future] = {}
@@ -103,7 +113,7 @@ class CoalescingEmbeddingModel:
                 continue
             vector, batch_id = await asyncio.shield(future)
             resolved[text] = vector
-            touched[batch_id] = self._batch_usage[batch_id]
+            touched.setdefault(batch_id, self._batch_usage[batch_id])
 
         return EmbeddingResult(
             vectors=tuple(resolved[text] for text in requested),
@@ -118,7 +128,7 @@ class CoalescingEmbeddingModel:
         if self._flush_handle is not None:
             return
         loop = asyncio.get_running_loop()
-        if self._coalesce_ms == 0:
+        if self._coalesce_ms <= 0:
             self._flush_handle = loop.call_soon(self._flush)
         else:
             self._flush_handle = loop.call_later(self._coalesce_ms / 1000, self._flush)
@@ -164,11 +174,12 @@ class CoalescingEmbeddingModel:
                     future.set_result((vector, batch_id))
 
     def _remember(self, text: str, vector: _Vector) -> None:
+        if self._cache_size == 0:
+            return
         self._cache[text] = vector
         self._cache.move_to_end(text)
-        if self._cache_size is not None:
-            while len(self._cache) > self._cache_size:
-                self._cache.popitem(last=False)
+        while len(self._cache) > self._cache_size:
+            self._cache.popitem(last=False)
 
 
 def _sum_optional(values: object) -> Optional[int]:
