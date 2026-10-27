@@ -49,7 +49,6 @@ jobs:
           -c competition/pytest.ini
           --confcutdir=competition
           competition/challenges/${{ matrix.challenge }}/acceptance
-        continue-on-error: true
 
   product-contract:
     runs-on: ubuntu-24.04
