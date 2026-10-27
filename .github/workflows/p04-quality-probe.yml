@@ -1,0 +1,75 @@
+name: p04-quality-probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    name: p04-f1-under-locked-pypdf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install locked competition dependencies
+        run: python -m pip install -r competition/requirements.txt
+      - name: Fetch annotations and the failing documents
+        run: |
+          mkdir -p /tmp/fb
+          curl -sL -o /tmp/fb/fb.jsonl \
+            https://raw.githubusercontent.com/patronus-ai/financebench/main/data/financebench_open_source.jsonl
+          for f in BLOCK_2020_10K CORNING_2021_10K BESTBUY_2017_10K CVSHEALTH_2018_10K PEPSICO_2022_10K; do
+            curl -sL -o "/tmp/fb/$f.pdf" \
+              "https://raw.githubusercontent.com/patronus-ai/financebench/main/pdfs/$f.pdf"
+          done
+          ls -la /tmp/fb
+      - name: Measure whole-page F1 per annotated page
+        run: |
+          python - <<'PY'
+          import collections, json, re
+          from pathlib import Path
+          from pypdf import PdfReader
+
+          print("pypdf", __import__("pypdf").__version__)
+          TOKEN = re.compile(r"[a-z]+|\d+")
+          def terms(t): return collections.Counter(TOKEN.findall(t.lower()))
+          def ov(a, b): return sum(min(c, b[t]) for t, c in a.items() if t in b)
+          def f1(a, b):
+              d = sum(a.values()) + sum(b.values())
+              return 2 * ov(a, b) / d if d else 1.0
+
+          rows = [json.loads(l) for l in Path("/tmp/fb/fb.jsonl").read_text().splitlines() if l.strip()]
+          want = []
+          for r in rows:
+              for e in r.get("evidence") or []:
+                  want.append((e["doc_name"], int(e["evidence_page_num"]) + 1, e["evidence_text_full_page"]))
+          by_doc = collections.defaultdict(list)
+          for d, p, t in want:
+              by_doc[d].append((p, t))
+
+          worst = {}
+          for name, pages in sorted(by_doc.items()):
+              pdf = Path(f"/tmp/fb/{name}.pdf")
+              if not pdf.exists():
+                  continue
+              reader = PdfReader(str(pdf))
+              for pno, text in pages:
+                  got = terms(reader.pages[pno - 1].extract_text())
+                  exp = terms(text)
+                  score = f1(got, exp)
+                  ratio = sum(got.values()) / max(sum(exp.values()), 1)
+                  key = name
+                  if key not in worst or score < worst[key][0]:
+                      worst[key] = (score, ratio, pno)
+              s, rt, p = worst[name]
+              print(f"  {name[:34]:34s} worst_f1={s:.4f} ratio={rt:.3f} p{p}  {'FAIL' if s < 0.95 else 'PASS'}")
+          bad = [k for k, v in worst.items() if v[0] < 0.95]
+          print()
+          print(f"documents failing F1 under the locked pypdf: {len(bad)}")
+          for k in bad:
+              print("   ", k)
+          PY
