@@ -85,7 +85,11 @@ _DISCOVERY_PAGE_SIZE = 100
 _RETRY_STATE_LIMIT = 1000
 _CHANNEL_QUEUE_LIMIT = _DISCOVERY_PAGE_SIZE // 2
 _DISCOVERY_PAGE_DELAY_SECONDS = 0.01
-_COUNT_REEVALUATION_SECONDS = 0.1
+_COUNT_REEVALUATION_SECONDS = 0.5
+# No wait shorter than this is worth a database pass. A deadline that is already
+# in the past would otherwise collapse to a 1 ms wake-up, and each wake-up opens
+# a write transaction on a file other connections also have to write.
+_MIN_WAKE_SECONDS = 0.02
 _DISCOVERY_TIMEOUT_SECONDS = 2.0
 _SPAWN_SIGTERM_GRACE_SECONDS = 1.0
 _WORKER_SHUTDOWN_TIMEOUT_SECONDS = 5.0
@@ -779,7 +783,19 @@ class ArtifactProcessingSupervisor:
                     # otherwise the scan would freeze at zero and admit nothing.
                     await self._register_dirty_scopes(connection, binding, scheduled=scheduled)
                 if persisted is None or not persisted.scan_in_progress:
-                    next_schedule_at = asyncio.get_running_loop().time() + max(0, (next_time - now).total_seconds())
+                    if binding.automatic_processing_interval is None and binding.cron is None:
+                        # Count-only admission has no time condition, so it has no
+                        # deadline to remember. ``_schedule_deadline`` reports
+                        # ``now`` as the next time when neither an interval nor a
+                        # cron exists, and storing that arms a deadline that is
+                        # already expired: the supervisor then wakes every
+                        # millisecond, opens a write transaction on each pass, and
+                        # starves either writer on the same SQLite file.
+                        next_schedule_at = None
+                    else:
+                        next_schedule_at = asyncio.get_running_loop().time() + max(
+                            0, (next_time - now).total_seconds()
+                        )
                     if due is not None or count_due:
                         # ``start_scan`` stamps the interval checkpoint by
                         # default. A count-driven scan must not do that: it would
@@ -1313,7 +1329,7 @@ class ArtifactProcessingSupervisor:
                 # for unrelated traffic; the scan itself stays cheap because it
                 # only reads intents and a per-Scope journal count.
                 deadlines.append(now + min(_COUNT_REEVALUATION_SECONDS, self._tick))
-        return None if not deadlines else max(0.001, min(deadlines) - now)
+        return None if not deadlines else max(_MIN_WAKE_SECONDS, min(deadlines) - now)
 
     def _log_failure(
         self,
