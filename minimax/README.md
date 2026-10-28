@@ -178,9 +178,9 @@ export MINIMAX_API_KEY='sk-...'
 python scripts/run_acceptance.py
 ```
 
-> 若 PowerContext 已按 2.2 节 `pip install -e ".[builtin]"` 安装，不需要额外设置路径。
-> 若未安装而是直接引用仓库源码，脚本会自动尝试 `../src`，也可以用
-> `POWERCONTEXT_SRC=/path/to/powercontext/src` 显式指定。
+> 脚本会自动把本目录的 `vendor/` 加进子进程的 `PYTHONPATH`，所以**不需要先手工设置
+> `PYTHONPATH`**。如果你改用 2.2 节的备选方式（`pip install -e` 装了源码仓库），
+> 脚本同样能跑；也可以用 `POWERCONTEXT_SRC=/path/to/powercontext/src` 显式指定。
 
 脚本会重置状态、重建资料库，依次执行「初始化 → 导入 v1 → 空状态读取 → 上下文 v1 →
 改前测试 → 规格更新重导入 → 上下文 v2 → MiniMax 生成 → 应用 → 改后测试 → 重启读状态」，
@@ -228,6 +228,10 @@ python -m pytest -q tests/test_filter_by_tag.py  # 目标功能 5 项（改前�
 | `records/powercontext_state.log` | 每次任务状态保存/读取的记录（含 revision） |
 | `records/T-001.verify.log` | 测试命令、退出码与输出 |
 | seekdb `query_log` 表 | 每次上下文检索实际执行的 SQL、参数与命中行数 |
+
+> 说明：`records/` 里记录的命令与工作目录是**作品开发机上的绝对路径**（Windows），
+> 与仓库内的相对路径一一对应（例如 `…\minimax\demo_project` ↔ `minimax/demo_project`）。
+> 换一台机器复现时以第 5 节的一键验收为准，它会在本目录下重新生成这套记录。
 
 查看数据库查询记录：
 

@@ -27,13 +27,14 @@ STATE_DB = ROOT / "var" / "task_state.db"
 
 TASK_ID = "T-001"
 
-# 让子进程既能导入 ctxsdd，也能在未 pip install 时导入仓库内的 powercontext。
-# 正常情况下评审环境里 powercontext 已 pip install，这里的路径只是兜底：
-#   - 默认取本目录的上一级 src（即 powercontext 仓库根/src）
-#   - 可用 POWERCONTEXT_SRC 显式指定
+# 让子进程既能导入 ctxsdd，也能导入 PowerContext：
+#   - vendor/：随本目录交付的 PowerContext 源码（见 vendor/NOTICE.md），排在最前，
+#     这样评审直接跑本脚本时不必再手工设置 PYTHONPATH；
+#   - ../src 与 POWERCONTEXT_SRC：兼容「用 pip install -e 的方式装了源码仓库」的场景。
 _ENV = os.environ.copy()
+_VENDOR = str(ROOT / "vendor")
 _SRC = os.environ.get("POWERCONTEXT_SRC") or str(ROOT.parent / "src")
-_PATH_ENTRIES = [str(ROOT), _SRC, _ENV.get("PYTHONPATH", "")]
+_PATH_ENTRIES = [str(ROOT), _VENDOR, _SRC, _ENV.get("PYTHONPATH", "")]
 _ENV["PYTHONPATH"] = os.pathsep.join(entry for entry in _PATH_ENTRIES if entry)
 _ENV.setdefault("PYTHONIOENCODING", "utf-8")
 
