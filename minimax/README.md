@@ -104,16 +104,38 @@ export CTXSDD_STATE_DB=./var/task_state.db
 
 ## 3. 调用入口
 
-所有命令在 `minimax/` 目录下执行：
+所有命令在 `minimax/` 目录下执行，先进入目录：
 
 ```bash
 cd minimax
-export PYTHONPATH="$PWD:$PWD/vendor"     # Windows 用分号分隔
 ```
 
-> 上面这一行已经包含 `vendor/`（随本目录交付的 PowerContext 源码），**默认情况下不需要
-> 再设置任何别的东西**。只有改用 2.2 节的备选方式（`pip install -e` 装了源码仓库）时，
-> 才需要把 `$PWD/vendor` 换成那个仓库的 `src` 目录，或直接用 `POWERCONTEXT_SRC` 指定。
+然后按你的系统选一行设置 `PYTHONPATH`（必须包含本目录与 `vendor/`，两处都要）：
+
+```bash
+# Linux / macOS
+export PYTHONPATH="$PWD:$PWD/vendor"
+```
+
+```powershell
+# Windows PowerShell
+$env:PYTHONPATH="$((Get-Location).Path);$((Get-Location).Path)\vendor"
+```
+
+```bash
+# Windows Git Bash
+export PYTHONPATH="$(pwd -W);$(pwd -W)/vendor"
+```
+
+> ⚠️ Windows 上有两个实测踩过的坑：**① 分隔符是分号 `;`**，用 `:` 会让整条 `PYTHONPATH`
+> 失效（表现为 `ModuleNotFoundError: No module named 'powercontext'`）；**② Git Bash 里
+> `$PWD` 是 `/c/...` 这种 POSIX 形式**，Windows 版 Python 认不出来，要用 `pwd -W`。
+
+> 这一行已经包含 `vendor/`（随本目录交付的 PowerContext 源码），**默认不需要再设置别的**。
+> 只有改用 2.2 节的备选方式（`pip install -e` 装了源码仓库）时，才把 `vendor` 换成那个
+> 仓库的 `src` 目录，或直接用 `POWERCONTEXT_SRC` 指定。
+>
+> 不想手工设置也没关系：第 5 节的一键验收脚本自己会拼好 `PYTHONPATH`。
 
 | 命令 | 作用 |
 |---|---|
