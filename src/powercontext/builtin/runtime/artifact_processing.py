@@ -90,6 +90,10 @@ _COUNT_REEVALUATION_SECONDS = 0.5
 # in the past would otherwise collapse to a 1 ms wake-up, and each wake-up opens
 # a write transaction on a file other connections also have to write.
 _MIN_WAKE_SECONDS = 0.02
+# A count-only binding is woken by ``wake()`` when this process captures input.
+# The periodic pass only has to notice input written by another process, so it
+# runs at this interval instead of on every wake.
+_COUNT_IDLE_RECHECK_SECONDS = 2.0
 _DISCOVERY_TIMEOUT_SECONDS = 2.0
 _SPAWN_SIGTERM_GRACE_SECONDS = 1.0
 _WORKER_SHUTDOWN_TIMEOUT_SECONDS = 5.0
@@ -429,6 +433,8 @@ class _FamilyState:
     unacknowledged: int = 0
     discovery_seconds: float = 0
     invocation_seconds: float = 0
+    automatic_checked_at: float = 0.0
+    automatic_checked_notifications: int = -1
 
 
 class ArtifactProcessingSupervisor:
@@ -722,6 +728,23 @@ class ArtifactProcessingSupervisor:
         capacity = self._fresh_capacity(state)
         if capacity <= 0:
             return
+        clock = asyncio.get_running_loop()
+        if (
+            binding.source_count_threshold is not None
+            and binding.automatic_processing_interval is None
+            and binding.cron is None
+            and not state.scan_in_progress
+            and state.automatic_checked_notifications == self._notifications
+            and clock.time() - state.automatic_checked_at < _COUNT_IDLE_RECHECK_SECONDS
+        ):
+            # Nothing this process wrote is waiting: a count-only binding with an
+            # unchanged notification counter and no open scan has no new input to
+            # weigh. Returning here keeps an idle binding from opening a
+            # transaction on every tick, which on SQLite holds the write lock for
+            # most of the run and starves every other writer to the same file.
+            return
+        state.automatic_checked_at = clock.time()
+        state.automatic_checked_notifications = self._notifications
         # Publish RAM progress only after the transaction commits. Advancing a
         # page cursor before admit/finish/commit succeeds would skip rolled-back
         # rows on the next discovery pass of this same persisted generation.
