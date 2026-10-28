@@ -138,7 +138,7 @@ LEFT JOIN pc_memory_vector_entries AS x
 WHERE h.scope_id = :scope_id
   AND h.memory_artifact_id IN :memory_artifact_ids
   AND MATCH (h.searchable_text) AGAINST (:analyzed_query)
-ORDER BY score DESC, h.entry_id, h.entry_version_id
+ORDER BY score DESC, h.memory_artifact_id, h.entry_id, h.entry_version_id
 LIMIT :candidate_limit)
 UNION ALL
 (SELECT 'vector' AS channel,
@@ -229,7 +229,12 @@ class OceanBaseMemoryFTSIndex:
         request: MemorySearchRequest,
         /,
     ) -> MemorySearchChannels:
-        if request.mode not in {"fts", "hybrid"}:
+        # A hybrid request is answered by ``OceanBaseMemoryVectorIndex`` alone: it
+        # holds both tables and returns the lexical and the vector candidates from
+        # one statement. Answering hybrid here as well issued a second candidate
+        # statement for the same search, and the fusion then received a lexical
+        # channel made of two concatenated rankings.
+        if request.mode != "fts":
             return MemorySearchChannels()
         score = match(MEMORY_ENTRY_HEADS_TABLE.c.searchable_text, against=request.analyzed_query)
         rows = (
@@ -321,7 +326,7 @@ def _channel_rank_key(row: dict[str, Any]) -> tuple[float, str, str]:
     )
 
 
-def _fts_rank_key(row: dict[str, Any]) -> tuple[float, str, str]:
+def _fts_rank_key(row: dict[str, Any]) -> tuple[float, str, str, str]:
     """Order one lexical channel candidate by its own text score.
 
     The lexical branch of the hybrid statement ranks with ``MATCH(...) AGAINST(...)``
@@ -335,6 +340,7 @@ def _fts_rank_key(row: dict[str, Any]) -> tuple[float, str, str]:
     score = row.get("score")
     return (
         -float(score) if score is not None else float("inf"),
+        str(row["memory_artifact_id"]),
         str(row["entry_id"]),
         str(row["entry_version_id"]),
     )
