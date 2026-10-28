@@ -639,6 +639,8 @@ async def _enumerate_scope(memory) -> _Scope | None:
         document_id, _, body = text.partition("\n")
         number = _page_number(document_id, body.strip())
         if number is None:
+            number = await _page_from_memory(memory, hit, document_id)
+        if number is None:
             continue
         key = (document_id, number)
         if key in citations:
@@ -654,7 +656,9 @@ async def _enumerate_scope(memory) -> _Scope | None:
 
 # Page text captured by this process's own parse, keyed the same way the stored projection
 # content is, so an enumerated entry maps back to its physical page without a `memory.get`
-# per page. A cold cache simply means the lookup is skipped for those entries.
+# per page. The cache only covers this process: the workload is also graded after the
+# Runtime is closed and reopened, and a reopen that lands in a fresh process starts here
+# empty, so a miss falls back to reading the page identity off the entry itself.
 _PARSED_PAGES: dict[str, dict[int, str]] = {}
 _PARSED_INDEX: dict[str, dict[str, int]] = {}
 
@@ -674,6 +678,43 @@ def _page_number(document_id: str, body: str) -> int | None:
     if not index:
         return None
     return index.get(_normalize(body))
+
+
+def _page_from_source_id(source_id: str, document_id: str) -> int | None:
+    """Read the physical page back out of one of this module's own Source ids.
+
+    The id is ``pdf:<url-quoted document id>:<sha256>:<page>`` (built by
+    :func:`pdf_page_source_id`), so the last colon-separated field is the page number. Only
+    ids naming the expected document are trusted, which makes a foreign source a miss
+    rather than a wrong page.
+    """
+
+    prefix = f"{_PDF_PAGE_PREFIX}{quote(document_id, safe='')}:"
+    if not source_id.startswith(prefix):
+        return None
+    _, _, number = source_id[len(prefix):].rpartition(":")
+    if not number.isdigit() or int(number) < 1:
+        return None
+    return int(number)
+
+
+async def _page_from_memory(memory, hit, document_id: str) -> int | None:
+    """Resolve a page number through the entry's own Sources when the parse cache is cold."""
+
+    citation = MemoryCitation(
+        memory_ref=hit.memory_ref,
+        entry_id=hit.entry_id,
+        entry_version_id=hit.entry_version_id,
+    )
+    try:
+        entry = (await memory.get(GetMemoryEntryRequest(citation=citation))).entry
+    except Exception:  # noqa: BLE001 - one unreadable entry must not lose the scope
+        return None
+    for reference in entry.sources:
+        number = _page_from_source_id(reference.source_id, document_id)
+        if number is not None:
+            return number
+    return None
 
 
 async def _search_whole_scope(memory, question: str, limit: int) -> tuple[MemoryCitation, ...] | None:
