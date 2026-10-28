@@ -44,7 +44,7 @@ minimax/
 | 组件 | 版本要求 | 说明 |
 |---|---|---|
 | Python | ≥ 3.11 | 开发与验证使用 3.13 |
-| PowerContext | 本仓库 `2026-competition-ecosystem` 分支 | 以 `pip install -e ".[builtin]"` 安装 |
+| PowerContext | `oceanbase/powercontext` 的 `2026-competition` 分支 | 该分支带 `pyproject.toml` 与 `builtin` extra，见 2.2 |
 | seekdb | `oceanbase/seekdb` 镜像，实测 `seekdb-v1.4.0.0` | 走 MySQL 协议，默认 `127.0.0.1:2881` |
 | MiniMax | `MiniMax-M3.1-Flash`（OpenAI 兼容 HTTP API） | 模型名可通过 `MINIMAX_MODEL` 覆盖 |
 | pymysql | ≥ 1.1 | 连接 seekdb |
@@ -61,12 +61,23 @@ mysql -h127.0.0.1 -P2881 -uroot -e "SELECT VERSION()"
 
 ### 2.2 安装 PowerContext
 
+PowerContext 的源码**已随本目录交付**在 `vendor/powercontext/`（Apache-2.0，
+来源分支与 commit 见 `vendor/NOTICE.md`，未修改任何文件）。因此评审**不需要再联网
+clone 任何仓库**——赛道仓库的 `2026-competition-ecosystem` 分支本身不含 PowerContext
+源码，也没有 `pyproject.toml`。
+
 ```bash
-# 在 PowerContext 仓库根目录（本目录的上一级）
+# 在 minimax/ 目录下
 python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install -e ".[builtin]"
-pip install pymysql
+pip install -r requirements.txt
 ```
+
+`requirements.txt` 已列出 PowerContext 运行所需的依赖；`vendor/` 通过第 3 节的
+`PYTHONPATH` 直接引用。
+
+> 备选方式（效果相同）：如果更希望用 pip 管理这个依赖，可以
+> `git clone -b 2026-competition https://github.com/oceanbase/powercontext.git`，
+> 然后在该仓库根执行 `pip install -e ".[builtin]"`。
 
 > 本作品只使用 PowerContext 的公开 SDK 接口（`open_builtin_contexts` +
 > `BuiltinArtifacts.memory`），未修改其任何源码。
@@ -93,12 +104,16 @@ export CTXSDD_STATE_DB=./var/task_state.db
 
 ## 3. 调用入口
 
-所有命令在 `minimax/` 目录下执行（`PYTHONPATH` 需包含当前目录与 PowerContext 的 `src`）：
+所有命令在 `minimax/` 目录下执行：
 
 ```bash
 cd minimax
-export PYTHONPATH="$PWD:$PWD/../src"     # Windows 用分号分隔
+export PYTHONPATH="$PWD:$PWD/vendor"     # Windows 用分号分隔
 ```
+
+> PowerContext 已按 2.2 节 `pip install -e ".[builtin]"` 安装时，只需把当前目录加入
+> `PYTHONPATH`；若未安装而是直接引用源码，再追加 PowerContext 的 `src` 目录，
+> 或用 `POWERCONTEXT_SRC` 显式指定。
 
 | 命令 | 作用 |
 |---|---|
