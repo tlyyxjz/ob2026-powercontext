@@ -1,0 +1,35 @@
+{
+  "checks": [
+    {
+      "name": "从空状态开始",
+      "ok": true,
+      "detail": "无历史状态时返回退出码 4"
+    },
+    {
+      "name": "修改前目标测试失败",
+      "ok": true,
+      "detail": "5 failed, 9 passed in 0.55s"
+    },
+    {
+      "name": "规格更新后使用新内容",
+      "ok": true,
+      "detail": "['SPEC-001#R3@v1', 'SPEC-001#R2@v1', 'SPEC-001#R5@v1', 'SPEC-001#R1@v1', 'SPEC-001#R4@v1'] -> ['SPEC-001#R3@v2', 'SPEC-001#R2@v2', 'SPEC-001#R5@v2', 'SPEC-001#R1@v2', 'SPEC-001#R6@v2', 'SPEC-001#R4@v2']"
+    },
+    {
+      "name": "上下文来源真实存在",
+      "ok": true,
+      "detail": "missing=[]"
+    },
+    {
+      "name": "修改后全部测试通过",
+      "ok": true,
+      "detail": "14 passed in 0.05s"
+    },
+    {
+      "name": "重启后可读取状态并用于后续",
+      "ok": true,
+      "detail": "spec=v2 verifications=[1, 0]"
+    }
+  ],
+  "all_ok": true
+}

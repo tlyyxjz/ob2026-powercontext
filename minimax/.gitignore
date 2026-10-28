@@ -1,0 +1,10 @@
+# 运行产物（可由 README 第 4 节重置步骤从空状态重建）
+var/
+.pytest_cache/
+__pycache__/
+*.pyc
+.venv/
+
+# 真实凭据不入库
+.env
+.minimax_key

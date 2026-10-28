@@ -1,0 +1,7 @@
+$ C:\Users\Lenovo\WorkBuddy\ob2026-minimax\.venv\Scripts\python.exe -m pytest -q tests
+# cwd: C:\Users\Lenovo\WorkBuddy\2026-09-03-22-46-59\pc-eco\minimax\demo_project
+# exit_code: 0
+
+..............                                                           [100%]
+14 passed in 0.05s
+

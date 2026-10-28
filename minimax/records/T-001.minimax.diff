@@ -1,0 +1,23 @@
+--- a/service.py
++++ b/service.py
+@@ -24,6 +24,8 @@
+     if min_priority is not None:
+         floor = int(Priority(min_priority))
+ 
++    normalized_tag = tag.strip().casefold() if tag is not None else None
++
+     selected: list[Task] = []
+     for task in tasks:
+         if status == "open" and task.done:
+@@ -32,7 +34,10 @@
+             continue
+         if floor is not None and int(task.priority) < floor:
+             continue
+-        # TODO(SPEC-001#R2): 标签筛选尚未实现，当前忽略 tag 参数。
++        if normalized_tag and not any(
++            task_tag.casefold() == normalized_tag for task_tag in task.tags
++        ):
++            continue
+         selected.append(task)
+ 
+     return selected

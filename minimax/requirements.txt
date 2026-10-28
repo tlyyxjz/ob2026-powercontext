@@ -1,0 +1,8 @@
+# MiniMax 赛道作品依赖
+#
+# PowerContext 请从本仓库安装（不要从 PyPI 拉）：
+#   在仓库根目录执行：  pip install -e ".[builtin]"
+# 本文件只列本目录额外需要的包。
+
+pymysql>=1.1,<2
+pytest>=7.0
