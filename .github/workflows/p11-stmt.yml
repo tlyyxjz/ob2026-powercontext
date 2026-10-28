@@ -1,0 +1,33 @@
+name: p11-stmt
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 2026-competition
+    paths:
+      - ".github/workflows/p11-stmt.yml"
+      - "competition/selftest_support/p11_stmt.py"
+      - "src/powercontext/builtin/persistence/memory_index.py"
+      - "src/powercontext/builtin/persistence/oceanbase/memory_index.py"
+
+permissions:
+  contents: read
+
+jobs:
+  stmt:
+    runs-on: ubuntu-24.04
+    name: p11-statement-count
+    env:
+      PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}/competition
+      PYTHONDONTWRITEBYTECODE: "1"
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install locked competition dependencies
+        run: python -m pip install -r competition/requirements.txt
+      - name: Count the statements one hybrid search issues
+        run: python competition/selftest_support/p11_stmt.py
