@@ -247,12 +247,11 @@ class CompositeMemoryIndex:
         request: MemorySearchRequest,
         /,
     ) -> MemorySearchChannels:
-        # A hybrid request is answered by the index that owns both channels: the
-        # backend publishes FTS and vector as separate indexes, and the vector index
-        # is the one that has both tables in hand, so it produces the single candidate
-        # statement the contract requires. The remaining indexes are not asked again,
-        # because a second candidate statement would exceed that contract and an empty
-        # first answer must stay empty rather than be re-queried elsewhere.
+        # Every index is asked, and each one decides what it can answer for the
+        # requested mode. A backend whose single index holds both tables answers a
+        # hybrid request by itself, and its lexical sibling declines that mode, so the
+        # composite does not add a second candidate statement. A backend that has to
+        # read the two channels separately still contributes both here.
         fts: tuple[MemoryChannelHit, ...] = ()
         vector: tuple[MemoryChannelHit, ...] = ()
         for index in self.indexes:
