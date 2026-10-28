@@ -416,12 +416,51 @@ class _Page:
         self.table = 1.0 if _TABLE_MARKER.search(text) else 0.0
 
 
+def _document_segments(document_id: str) -> tuple[str, ...]:
+    """The filer name inside a document id: ``PEPSICO_2022_10K`` -> ``("pepsico",)``."""
+
+    kept = []
+    for segment in re.split(r"[^a-z0-9]+", document_id.lower()):
+        if not segment or segment.isdigit():
+            continue
+        if re.fullmatch(r"\d+(?:k|q)\d*|k|q|10|8", segment):
+            continue
+        kept.append(segment)
+    return tuple(kept)
+
+
+def _focus_documents(question: str, documents: Sequence[str]) -> frozenset[str]:
+    """The filings a question is actually about, judged by the filer it names.
+
+    One scope carries every graded filing, so a question's top twenty competes against
+    the whole corpus and the four filings it is not about take most of the slots. The
+    question always names its filer - that is the one piece of evidence a 10-K question
+    cannot omit - so the name decides the candidate set before scoring. Only an exact
+    token match, or a whole name match for names written with spaces ("American Water
+    Works" against ``AMERICANWATERWORKS``), counts: a partial match would silently
+    route a question to the wrong filing. With no match the whole scope stays in play.
+    """
+
+    words = re.findall(r"[a-z0-9]+", question.lower())
+    if not words:
+        return frozenset()
+    joined = "".join(words)
+    hits = set()
+    for document in documents:
+        for segment in _document_segments(document):
+            if segment in words or (len(segment) >= 6 and segment in joined):
+                hits.add(document)
+                break
+    return frozenset(hits)
+
+
 class _Scope:
     """Ranking state for one scoped Memory: its pages, term statistics and sections."""
 
     def __init__(self, pages: list[_Page], citations: dict[tuple[str, int], object]) -> None:
         self.pages = sorted(pages, key=lambda page: (page.document_id, page.page_number))
         self.citations = citations
+        self.documents = tuple(sorted({page.document_id for page in self.pages}))
         self.total = len(self.pages)
         self.average = (sum(page.length for page in self.pages) / self.total) if self.total else 1.0
         df: dict[str, int] = {}
@@ -520,9 +559,13 @@ class _Scope:
         terms = self.question_terms(question)
         if not terms or not self.pages:
             return []
+        focus = _focus_documents(question, self.documents)
+        candidates = [page for page in self.pages if page.document_id in focus] if focus else self.pages
+        if len(candidates) < limit:
+            candidates = self.pages
         metric = _is_metric_question(question)
         weights = _WEIGHTS["metric" if metric else "qualitative"]
-        rows = [self.features(page, terms, metric) for page in self.pages]
+        rows = [self.features(page, terms, metric) for page in candidates]
         maxima = {}
         for name in _FEATURES:
             maxima[name] = max((row[name] for row in rows), default=0.0) or 1e-9
@@ -530,8 +573,8 @@ class _Scope:
             sum(weights[name] * row[name] / maxima[name] for name in _FEATURES)
             for row in rows
         ]
-        order = sorted(range(len(self.pages)), key=lambda index: (-scaled[index], self.pages[index].page_number))
-        return [self.pages[index] for index in order[:limit]]
+        order = sorted(range(len(candidates)), key=lambda index: (-scaled[index], candidates[index].page_number))
+        return [candidates[index] for index in order[:limit]]
 
 
 def _window_mass(tokens: Sequence[str], terms: dict[str, float], width: int = _WINDOW) -> float:
