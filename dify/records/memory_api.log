@@ -1,0 +1,21 @@
+{"at": "2026-10-28T10:33:34Z", "action": "reset", "user_id": "guest-001", "scope": "inn/guest-001", "artifact_id": "memory", "entries_total": 1, "revision": 1}
+{"at": "2026-10-28T10:33:34Z", "action": "smash", "user_id": "guest-001", "text": "他把两张桌子掀了，还骂了厨子", "reply": "……客官好大的火气。", "scope": "inn/guest-001", "artifact_id": "memory", "entries_total": 2, "revision": 2}
+{"at": "2026-10-28T10:33:35Z", "action": "recall", "user_id": "guest-001", "returned": 1, "events_in_scope": 1, "revision": 2}
+{"at": "2026-10-28T10:42:08Z", "action": "recall", "user_id": "guest-001", "returned": 1, "events_in_scope": 1, "revision": 2}
+{"at": "2026-10-28T10:42:09Z", "action": "recall", "user_id": "guest-001", "returned": 1, "events_in_scope": 1, "revision": 2}
+{"at": "2026-10-28T10:42:09Z", "action": "talk", "user_id": "guest-001", "text": "他说\"这店也就那样\"然后摔了个碗", "reply": "哦？碗钱记你账上。", "scope": "inn/guest-001", "artifact_id": "memory", "entries_total": 3, "revision": 3}
+{"at": "2026-10-28T10:42:09Z", "action": "recall", "user_id": "guest-001", "returned": 2, "events_in_scope": 2, "revision": 3}
+{"at": "2026-10-28T11:27:38Z", "action": "recall", "user_id": "阿吉", "returned": 0, "events_in_scope": 0, "revision": null}
+{"at": "2026-10-28T11:27:38Z", "action": "talk", "user_id": "阿吉", "text": "上次我把你家碗摔了，还赖着账没给，今儿又来了。", "reply": "房钱翻倍，上回摔的那只碗还没算呢。", "scope": "inn/阿吉", "artifact_id": "memory", "entries_total": 1, "revision": 1}
+{"at": "2026-10-28T11:28:34Z", "action": "recall", "user_id": "阿吉", "returned": 1, "events_in_scope": 1, "revision": 1}
+{"at": "2026-10-28T11:28:34Z", "action": "talk", "user_id": "阿吉", "text": "上次我把你家碗摔了，还赖着账没给，今儿又来了。", "reply": "房钱翻倍，上回摔的那只碗还没算呢。", "scope": "inn/阿吉", "artifact_id": "memory", "entries_total": 2, "revision": 2}
+{"at": "2026-10-28T12:43:20Z", "action": "recall", "user_id": "阿七", "returned": 0, "events_in_scope": 0, "revision": null}
+{"at": "2026-10-28T12:43:27Z", "action": "talk", "user_id": "阿七", "text": "我又来了，还有面吗？", "reply": "", "scope": "inn/阿七", "artifact_id": "memory", "entries_total": 1, "revision": 1}
+{"at": "2026-10-28T12:43:37Z", "action": "recall", "user_id": "阿七", "returned": 1, "events_in_scope": 1, "revision": 1}
+{"at": "2026-10-28T12:43:37Z", "action": "talk", "user_id": "阿七", "text": "上次我把你这儿的桌子掀了，你忘了？", "reply": "", "scope": "inn/阿七", "artifact_id": "memory", "entries_total": 2, "revision": 2}
+{"at": "2026-10-28T12:44:13Z", "action": "recall", "user_id": "阿七", "returned": 2, "events_in_scope": 2, "revision": 2}
+{"at": "2026-10-28T12:44:13Z", "action": "talk", "user_id": "阿七", "text": "我又来了，还有面吗？", "reply": "又是你。上回掀桌子那笔账我可记着，房钱翻倍，先赔碗再谈住不住。", "scope": "inn/阿七", "artifact_id": "memory", "entries_total": 3, "revision": 3}
+{"at": "2026-10-28T12:44:56Z", "action": "recall", "user_id": "阿七", "returned": 3, "events_in_scope": 3, "revision": 3}
+{"at": "2026-10-28T12:44:56Z", "action": "talk", "user_id": "阿七", "text": "我又来了，还有面吗？", "reply": "又是你。上回掀桌子那笔账我可记着，房钱翻倍，先赔碗再谈住不住。", "scope": "inn/阿七", "artifact_id": "memory", "entries_total": 4, "revision": 4}
+{"at": "2026-10-28T12:59:26Z", "action": "recall", "user_id": "阿七", "returned": 4, "events_in_scope": 4, "revision": 4}
+{"at": "2026-10-28T12:59:26Z", "action": "talk", "user_id": "阿七", "text": "我又来了，还有面吗？", "reply": "又是你。上回掀桌子那笔账我可记着，房钱翻倍，先赔碗再谈住不住。", "scope": "inn/阿七", "artifact_id": "memory", "entries_total": 5, "revision": 5}

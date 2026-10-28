@@ -1,0 +1,325 @@
+app:
+  description: 一个会记住你干过什么的客栈掌柜——你在她店里做的每件事，下次登门她都会提。
+  icon: 🏮
+  icon_background: '#FFEAD5'
+  mode: advanced-chat
+  name: 记仇客栈
+  use_icon_as_answer_icon: false
+kind: app
+version: 0.1.5
+workflow:
+  conversation_variables: []
+  environment_variables:
+  - description: 配套后端（dify/backend）的地址，见 README 第 3 节
+    id: 3f1c6b52-8a4d-4e19-9c7a-1b2d3e4f5a6b
+    name: MEMORY_API_BASE
+    selector:
+    - env
+    - MEMORY_API_BASE
+    value: http://host.docker.internal:8765
+    value_type: string
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        image_file_size_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: '【半盏楼 · 青石镇口】
+
+      门帘一掀，柜台后头那位把算盘往桌上一搁：
+
+      「客官面生啊……报个名号，我好记在账上。」'
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions:
+    - 报上名号，点一碗阳春面
+    - 我上次是不是砸过你的店？
+    - 帮掌柜挑一担水吧
+    suggested_questions_after_answer:
+      enabled: true
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        sourceType: start
+        targetType: http-request
+      id: 1761610000001-source-1761610000002-target
+      selected: false
+      source: '1761610000001'
+      sourceHandle: source
+      target: '1761610000002'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: http-request
+        targetType: llm
+      id: 1761610000002-source-1761610000003-target
+      selected: false
+      source: '1761610000002'
+      sourceHandle: source
+      target: '1761610000003'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: llm
+        targetType: http-request
+      id: 1761610000003-source-1761610000004-target
+      selected: false
+      source: '1761610000003'
+      sourceHandle: source
+      target: '1761610000004'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: http-request
+        targetType: answer
+      id: 1761610000004-source-1761610000005-target
+      selected: false
+      source: '1761610000004'
+      sourceHandle: source
+      target: '1761610000005'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        desc: 报上名号后，这个名号就是你在 PowerContext 里的身份
+        selected: false
+        title: 开始
+        type: start
+        variables:
+        - label: 报上名号
+          max_length: 32
+          required: true
+          type: text-input
+          variable: guest_name
+      height: 88
+      id: '1761610000001'
+      position:
+        x: 0
+        y: 260
+      positionAbsolute:
+        x: 0
+        y: 260
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 243
+    - data:
+        authorization:
+          config: null
+          type: no-auth
+        body:
+          data:
+          - id: key-value-1
+            key: user_id
+            type: text
+            value: '{{#1761610000001.guest_name#}}'
+          - id: key-value-2
+            key: limit
+            type: text
+            value: '20'
+          type: x-www-form-urlencoded
+        desc: 从 PowerContext 读回这位客官的历史事件（跨会话有效）
+        headers: ''
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 3
+          retry_enabled: true
+          retry_interval: 200
+        selected: false
+        timeout:
+          max_connect_timeout: 10
+          max_read_timeout: 30
+          max_write_timeout: 10
+        title: 想起旧账（PowerContext 读取）
+        type: http-request
+        url: '{{#env.MEMORY_API_BASE#}}/recall_form'
+        variables: []
+      height: 108
+      id: '1761610000002'
+      position:
+        x: 300
+        y: 250
+      positionAbsolute:
+        x: 300
+        y: 250
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 243
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: 把客官的历史账本塞进人设里，态度完全由旧账决定
+        model:
+          completion_params:
+            temperature: 0.85
+            top_p: 0.9
+            max_tokens: 400
+          mode: chat
+          name: MiniMax-M3.1-Flash
+          provider: openai_api_compatible
+        prompt_template:
+        - edition_type: basic
+          id: b7c1e0a2-4f3d-4a91-8c25-6d7e9f0a1b2c
+          role: system
+          text: |
+            你是「柳三娘」，青石镇口「半盏楼」的掌柜。三十来岁，算盘打得比嘴快，记性极好，尤其记仇。
+
+            下面是这位客官在你这店里留下的账本（JSON，count 是条数，events 是按时间排的事件列表，
+            每条含 action / text / reply）。**如果 count 为 0，说明他头一回登门。**
+
+            账本：
+            {{#1761610000002.body#}}
+
+            你的态度必须完全由账本决定：
+            - count 为 0：客客气气，但带三分试探，问他打哪儿来。
+            - 账本里有砸店、闹事、赖账：阴阳怪气，把旧事点名说出来（说清楚是哪一次），开价翻倍，但别赶人走。
+            - 账本里有帮忙（挑水、赶走闹事的、修门窗）：热情，主动送一碟花生米，念叨「上回多亏你」。
+            - 账本里有吹牛：拆穿他，拿他上次吹的那句原话堵他。
+            - 只是吃过饭：正常招呼，可以提一句「上回那碗面还合口吗」。
+
+            说话规矩：
+            1. 直接说台词，不要写「（微笑）」「*叹气*」这类旁白，不要解释你在做什么。
+            2. 30 到 90 个字，口语，有江湖气，像真人说话。
+            3. 必须落到具体的事上——提旧账时要点出他干过什么，不要含糊说「你以前不老实」。
+            4. 不要说自己是 AI、不要提「记忆」「数据库」「系统」这些词。
+            5. 客官要是点了菜或提了要求，先应下来，再顺嘴带一句旧账。
+        selected: false
+        title: 掌柜的嘴
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 140
+      id: '1761610000003'
+      position:
+        x: 600
+        y: 240
+      positionAbsolute:
+        x: 600
+        y: 240
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 243
+    - data:
+        authorization:
+          config: null
+          type: no-auth
+        body:
+          data:
+          - id: key-value-1
+            key: user_id
+            type: text
+            value: '{{#1761610000001.guest_name#}}'
+          - id: key-value-2
+            key: action
+            type: text
+            value: talk
+          - id: key-value-3
+            key: text
+            type: text
+            value: '{{#sys.query#}}'
+          - id: key-value-4
+            key: reply
+            type: text
+            value: '{{#1761610000003.text#}}'
+          type: x-www-form-urlencoded
+        desc: 把这轮对话写进 PowerContext，下次登门她会记得
+        headers: ''
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 3
+          retry_enabled: true
+          retry_interval: 200
+        selected: false
+        timeout:
+          max_connect_timeout: 10
+          max_read_timeout: 30
+          max_write_timeout: 10
+        title: 记下这笔账（PowerContext 写入）
+        type: http-request
+        url: '{{#env.MEMORY_API_BASE#}}/remember_form'
+        variables: []
+      height: 108
+      id: '1761610000004'
+      position:
+        x: 900
+        y: 250
+      positionAbsolute:
+        x: 900
+        y: 250
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 243
+    - data:
+        answer: '{{#1761610000003.text#}}'
+        desc: 只把掌柜的台词给客官看，写入结果不外露
+        selected: false
+        title: 掌柜开口
+        type: answer
+        variables: []
+      height: 103
+      id: '1761610000005'
+      position:
+        x: 1200
+        y: 250
+      positionAbsolute:
+        x: 1200
+        y: 250
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 243
+    viewport:
+      x: 60
+      y: 60
+      zoom: 0.7

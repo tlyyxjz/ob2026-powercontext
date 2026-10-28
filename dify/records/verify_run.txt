@@ -1,0 +1,11 @@
+import: 200 {"id":"c0ce382b-72df-49a7-9426-93f45164cda2","status":"completed-with-warnings","app_id":"94e8f951-323c-434c-a706-b75d4c6be161","app_mode":"advanced-chat","permission_keys":[],"current_dsl_version":"0
+publish: 200
+run: 200
+  开始                           succeeded  {"guest_name": "阿七"}
+  想起旧账（PowerContext 读取）        succeeded  {"status_code": 200, "body": "{\"user_id\":\"阿七\",\"scope\":\"inn/阿七\",\"count\":4,\"events\":[{\"action\":\"talk\",\"at\":\"2026-10-28T12:4
+  掌柜的嘴                         succeeded  {"text": "又是你。上回掀桌子那笔账我可记着，房钱翻倍，先赔碗再谈住不住。", "reasoning_content": "", "usage": {"completion_price": "0", "completion_price_unit": "0", "compl
+  记下这笔账（PowerContext 写入）       succeeded  {"status_code": 200, "body": "{\"ok\":true,\"user_id\":\"阿七\",\"scope\":\"inn/阿七\",\"artifact_id\":\"memory\",\"entries_total\":5,\"revision
+  掌柜开口                         succeeded  {"answer": "又是你。上回掀桌子那笔账我可记着，房钱翻倍，先赔碗再谈住不住。", "files": []}
+workflow: succeeded | answer: "又是你。上回掀桌子那笔账我可记着，房钱翻倍，先赔碗再谈住不住。"
+
+结论: 全部节点通过

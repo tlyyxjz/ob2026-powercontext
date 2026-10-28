@@ -1,0 +1,15 @@
+# 运行时产物，不入库
+data/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 后端本地配置
+.env
+
+# records/ 下的运行日志**保留**：题面 4.3 要求提供运行证据，
+# memory_api.log 就是「记忆真的被读写过」的原始记录。
+
+# 本地假模型的请求日志（跑验证时产生，不是源码）
+mock_llm.log
