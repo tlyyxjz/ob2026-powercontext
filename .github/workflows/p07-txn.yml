@@ -34,6 +34,9 @@ jobs:
         run: python -m pip install -r competition/requirements.txt
       - name: Count-trigger acceptance with transaction timing
         run: |
-          python -m pytest -q -c competition/pytest.ini --confcutdir=competition \
-            -p selftest_support.p07_txnprobe \
-            competition/challenges/processing-01-count-trigger/acceptance 2>&1 | tail -90
+          for round in 1 2 3; do
+            echo "===== round $round $(date -u +%H:%M:%S) ====="
+            python -m pytest -q -c competition/pytest.ini --confcutdir=competition \
+              -p selftest_support.p07_txnprobe \
+              competition/challenges/processing-01-count-trigger/acceptance 2>&1 | tail -60
+          done
