@@ -6,7 +6,8 @@
 
 前置：
 - seekdb 已在 127.0.0.1:2881 运行；
-- 已 ``pip install -e ".[builtin]"`` 安装 PowerContext（在仓库根执行）；
+- 已 ``pip install -r requirements.txt``（PowerContext 源码随目录交付在 ``vendor/``，
+  本脚本会自动把它加进子进程的 ``PYTHONPATH``，不需要手工设置）；
 - 已设置 ``MINIMAX_API_KEY``。
 
 脚本会重建资料库与状态库，因此每次执行结果一致（唯一变量是模型返回的代码内容）。

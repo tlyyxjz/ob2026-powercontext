@@ -111,9 +111,9 @@ cd minimax
 export PYTHONPATH="$PWD:$PWD/vendor"     # Windows 用分号分隔
 ```
 
-> PowerContext 已按 2.2 节 `pip install -e ".[builtin]"` 安装时，只需把当前目录加入
-> `PYTHONPATH`；若未安装而是直接引用源码，再追加 PowerContext 的 `src` 目录，
-> 或用 `POWERCONTEXT_SRC` 显式指定。
+> 上面这一行已经包含 `vendor/`（随本目录交付的 PowerContext 源码），**默认情况下不需要
+> 再设置任何别的东西**。只有改用 2.2 节的备选方式（`pip install -e` 装了源码仓库）时，
+> 才需要把 `$PWD/vendor` 换成那个仓库的 `src` 目录，或直接用 `POWERCONTEXT_SRC` 指定。
 
 | 命令 | 作用 |
 |---|---|
