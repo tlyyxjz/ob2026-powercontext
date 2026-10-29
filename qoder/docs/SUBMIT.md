@@ -9,11 +9,11 @@
 
 | 字段 | 填什么 | 现在有没有 |
 |---|---|---|
-| 项目网站网址 | `qodercn sites` 发布后拿到的完整 URL（`https://` 开头，且**无痕窗口能打开**） | 🟡 站点已构建，待发布 |
-| 代码仓库 | 公开可读的仓库地址 | ✅ `https://github.com/tlyyxjz/ob2026-powercontext` |
-| Qoder 账号 UID | **发布站点那个账号**的 UID | ✅ `019fd088-8e20-78d5-9ec5-587d476c50b2`（取自登录后 status 的 Avatar URL，待与站点 API 返回值复核） |
-| 分支 / commit | 分支必须**基于 `2026-competition-ecosystem`**，commit 填推送后的回读值 | 🟡 本地已改，待提交推送 |
-| 材料目录 | 分支上的 `qoder/` | ✅ 已含 README / docs / data / db / server / web |
+| 项目网站网址 | `https://review-interviewer-qpydgq8t0ig.qoder.zone`（`access_mode=public`，已实测 HTTP 200） | ✅ |
+| 代码仓库 | `https://github.com/tlyyxjz/ob2026-powercontext` | ✅ |
+| Qoder 账号 UID | `019fd088-8e20-78d5-9ec5-587d476c50b2` | ✅ |
+| 分支 / commit | `2026-competition-ecosystem` / `68988b387c1c6a6ffa59a988e0189c9cfdd85fae`（回读 `git ls-remote` 确认） | ✅ |
+| 材料目录 | 分支上的 `qoder/` | ✅ 25 个文件、6525 行 |
 
 ⚠️ 题面第一段原文：「在完成私有 repo 导入后，你**已经获得一个同名的分支**」⇒ 直接用 `2026-competition-ecosystem`，
 不要另起 `qoder-impl` 之类的新分支名。
@@ -24,11 +24,28 @@
 
 | # | 材料 | 题面要求（逐字要点） | 落在哪个文件 | 状态 |
 |---|---|---|---|---|
-| 1 | 项目网站网址 | 可见范围「任何人都可访问」 | 平台字段 | 🟡 站点已构建，待发布 |
+| 1 | 项目网站网址 | 可见范围「任何人都可访问」 | 平台字段 | ✅ 已公开，HTTP 200 |
 | 2 | 代码仓库 | 完整源码，公开或向评审开放 | 平台字段 | ✅ |
 | 3 | 运行说明 | 运行环境、依赖版本、seekdb/PowerContext 部署与接入、从安装到启动的完整步骤 | `qoder/README.md` | ✅ |
 | 4 | 验证样例 | 「至少一组」，含初始数据、输入、操作步骤、预期结果，以及指定技术发挥作用的记录 | `qoder/docs/VERIFY.md` | ✅ 5 组样例，全部带真实读数 |
-| 5 | Qoder 开发记录 | 关键环节的对话截图或录屏，**并附 Qoder 账号 UID** | `qoder/docs/development-log.md` + 截图 | 🟡 流水已导出（6 轮），截图待补 |
+| 5 | Qoder 开发记录 | 关键环节的对话截图或录屏，**并附 Qoder 账号 UID** | `qoder/docs/development-log.md` + 截图 | ✅ 流水 6 轮已导出；截图见下节 |
+
+## 1.5 发布过程中踩到的一个坑（备查）
+
+`prepare_site` 第一次调用会把入参指纹冻进本地快照（`~/.qoder-cn/sites/state/publishing/`）。
+之后再改任何一个字段都会报 `sites_conflict`（防篡改，**不是撞名**），
+而不改又会因为 `createNewSite:true` 时缺 `slug` 被服务端拒（`sites_invalid_request`）。
+两者构成死结 ⇒ **只能换一个全新的 actionId，从第一次调用就带全 `slug`**。
+
+正确入参（本项目的实际值）：
+
+```json
+{"actionId":"<新 UUIDv4>","projectRoot":"<qoder 目录绝对路径>","webDirectory":"web/site",
+ "createNewSite":true,"displayName":"复盘面试官","slug":"review-interviewer"}
+```
+
+`slug` 正则是 `^[a-z0-9][a-z0-9-]{0,62}$`（纯 ASCII），中文 `displayName` 派生不出地址，
+所以必须显式给。
 
 鼓励项：使用效果（人数、次数、提效对比、反馈，附来源）。站点用 `get_analytics` 取 PV/UV，
 但**UV 必须用服务端总数，不能自己加总每日序列**（该操作说明原文如此）。

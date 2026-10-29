@@ -6,3 +6,6 @@ seekdb.db/
 # Python
 __pycache__/
 *.py[cod]
+
+# 站点发布用的构建产物副本（源文件在 web/site/）
+dist/
