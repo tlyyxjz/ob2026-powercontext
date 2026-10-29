@@ -1,0 +1,14 @@
+# 复盘面试官 —— 运行依赖
+#
+# 安装：pip install -r requirements.txt
+# Python 要求 >= 3.11（pylibseekdb 的 wheel 标签为 cp311 / cp312-abi3）
+# Linux 需要 manylinux_2_28（glibc >= 2.28，Ubuntu 20.04+ / Debian 11+ 满足）
+#
+# 注意 PyMySQL 的大小写与版本号：
+#   包名规范写法是 PyMySQL；pymysql 是它的导入名，pip 也认。
+#   pymysql.__version__ 会打印 "2.2.8"，那是包内遗留的旧常量，不是发布版本；
+#   pip 能解析到的发布版本是 1.2.3 —— 写 2.2.8 会直接报
+#   "No matching distribution found for pymysql==2.2.8"。
+
+pylibseekdb==1.4.0.post2
+PyMySQL==1.2.3

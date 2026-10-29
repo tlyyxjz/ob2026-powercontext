@@ -16,7 +16,7 @@
 |---|---|---|
 | Python | **3.13.14** | 需 **3.11+**（`pylibseekdb` 的 wheel 是 cp312-abi3，3.11 起可用） |
 | pylibseekdb | **1.4.0.post2** | Windows 有官方 wheel：`pylibseekdb-1.4.0.post2-cp312-abi3-win_amd64.whl`（65.9 MB） |
-| pymysql | **2.2.8** | 只用它作为 seekdb 的 DB-API 客户端 |
+| PyMySQL | **1.2.3** | seekdb 的 DB-API 客户端。⚠️ `pymysql.__version__` 打印 `2.2.8` 是包内遗留常量，**pip 认的发布版本是 1.2.3** |
 | 操作系统 | Windows 11 | Linux/macOS 同样有 wheel，命令里的路径按平台改 |
 | 磁盘 | 可用 ≥ **400 MB** | 首次初始化后 `.data/seekdb.db` 约 **330 MB**（见第六节） |
 | 端口 | 8765（可改） | 只监听 `127.0.0.1`，不对外网开放 |
@@ -36,8 +36,8 @@ source .venv/Scripts/activate        # Git Bash
 # .venv\Scripts\Activate.ps1         # PowerShell
 # .venv\Scripts\activate.bat         # CMD
 
-# 3. 装依赖（两个包，总下载约 66 MB）
-pip install pylibseekdb==1.4.0.post2 pymysql==2.2.8
+# 3. 装依赖（两个包，总下载约 66 MB；版本见 requirements.txt）
+pip install -r requirements.txt
 
 # 4. 初始化数据库：建库、建表、导入题库（幂等，可以反复执行）
 python db/init.py
@@ -60,7 +60,7 @@ listening http://127.0.0.1:8765  (web root: .../web)
 换国内镜像 2 分半能下完：
 
 ```bash
-pip install pylibseekdb==1.4.0.post2 pymysql==2.2.8 \
+pip install -r requirements.txt \
   -i https://mirrors.aliyun.com/pypi/simple/     # 或中科大 / 腾讯
 ```
 
