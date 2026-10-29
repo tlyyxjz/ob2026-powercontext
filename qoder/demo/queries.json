@@ -1,0 +1,368 @@
+{
+  "generated_by": "本地 seekdb 实际执行后导出（不是前端模拟）",
+  "engine": "pylibseekdb 1.4.0.post2 / seekdb-v1.4.0.0",
+  "table": "questions",
+  "ratio": 0.3,
+  "corpus": {
+    "questions": 21,
+    "ref_points": 85
+  },
+  "cases": [
+    {
+      "user_text": "这个查询怎么突然变慢了，加了索引也没用",
+      "query": "慢查询 索引失效",
+      "sql": "SELECT id, left(stem, 40) AS stem, MATCH(keywords) AGAINST('慢查询 索引失效') AS score FROM questions WHERE MATCH(keywords) AGAINST('慢查询 索引失效') ORDER BY score DESC",
+      "top_score": 5.6211,
+      "threshold": 1.6863,
+      "hits": [
+        {
+          "id": 6,
+          "stem": "慢查询怎么排查？一条 SQL 很慢，说说你的顺序和每一步看什么。",
+          "score": 5.6211
+        },
+        {
+          "id": 13,
+          "stem": "最左前缀原则是什么？为什么联合索引 a,b,c 用不上 WHERE b=1？",
+          "score": 3.6639
+        },
+        {
+          "id": 1,
+          "stem": "什么情况下 MySQL 的索引会失效？举出至少三种，并说明为什么会失效。",
+          "score": 2.7021
+        },
+        {
+          "id": 12,
+          "stem": "什么是 N+1 查询？怎么发现、怎么解决？",
+          "score": 2.2808
+        },
+        {
+          "id": 2,
+          "stem": "什么是回表？为什么说「覆盖索引能避免回表」？",
+          "score": 1.3955
+        },
+        {
+          "id": 17,
+          "stem": "分片键怎么选？选错了会有什么后果？",
+          "score": 1.3581
+        },
+        {
+          "id": 8,
+          "stem": "间隙锁是什么？在什么隔离级别下生效？它能完全防止幻读吗？",
+          "score": 1.2097
+        },
+        {
+          "id": 7,
+          "stem": "聚簇索引和二级索引的区别？为什么建议用自增主键？",
+          "score": 1.1949
+        },
+        {
+          "id": 20,
+          "stem": "索引下推（ICP）是什么？它省掉了什么开销？",
+          "score": 1.0391
+        },
+        {
+          "id": 14,
+          "stem": "联合索引的字段顺序该怎么排？把区分度最高的放最前面总是对的吗？",
+          "score": 0.9465
+        }
+      ],
+      "kept": [
+        6,
+        13,
+        1,
+        12
+      ]
+    },
+    {
+      "user_text": "明明建了索引为什么还是全表扫描",
+      "query": "索引失效",
+      "sql": "SELECT id, left(stem, 40) AS stem, MATCH(keywords) AGAINST('索引失效') AS score FROM questions WHERE MATCH(keywords) AGAINST('索引失效') ORDER BY score DESC",
+      "top_score": 3.6639,
+      "threshold": 1.0992,
+      "hits": [
+        {
+          "id": 13,
+          "stem": "最左前缀原则是什么？为什么联合索引 a,b,c 用不上 WHERE b=1？",
+          "score": 3.6639
+        },
+        {
+          "id": 1,
+          "stem": "什么情况下 MySQL 的索引会失效？举出至少三种，并说明为什么会失效。",
+          "score": 2.7021
+        },
+        {
+          "id": 2,
+          "stem": "什么是回表？为什么说「覆盖索引能避免回表」？",
+          "score": 1.3955
+        },
+        {
+          "id": 7,
+          "stem": "聚簇索引和二级索引的区别？为什么建议用自增主键？",
+          "score": 1.1949
+        },
+        {
+          "id": 20,
+          "stem": "索引下推（ICP）是什么？它省掉了什么开销？",
+          "score": 1.0391
+        },
+        {
+          "id": 14,
+          "stem": "联合索引的字段顺序该怎么排？把区分度最高的放最前面总是对的吗？",
+          "score": 0.9465
+        }
+      ],
+      "kept": [
+        13,
+        1,
+        2,
+        7
+      ]
+    },
+    {
+      "user_text": "面试官问我回表是什么，我答不上来",
+      "query": "回表 覆盖索引",
+      "sql": "SELECT id, left(stem, 40) AS stem, MATCH(keywords) AGAINST('回表 覆盖索引') AS score FROM questions WHERE MATCH(keywords) AGAINST('回表 覆盖索引') ORDER BY score DESC",
+      "top_score": 7.4092,
+      "threshold": 2.2228,
+      "hits": [
+        {
+          "id": 2,
+          "stem": "什么是回表？为什么说「覆盖索引能避免回表」？",
+          "score": 7.4092
+        },
+        {
+          "id": 20,
+          "stem": "索引下推（ICP）是什么？它省掉了什么开销？",
+          "score": 4.8086
+        },
+        {
+          "id": 1,
+          "stem": "什么情况下 MySQL 的索引会失效？举出至少三种，并说明为什么会失效。",
+          "score": 1.8188
+        },
+        {
+          "id": 13,
+          "stem": "最左前缀原则是什么？为什么联合索引 a,b,c 用不上 WHERE b=1？",
+          "score": 1.4268
+        },
+        {
+          "id": 7,
+          "stem": "聚簇索引和二级索引的区别？为什么建议用自增主键？",
+          "score": 1.1949
+        },
+        {
+          "id": 17,
+          "stem": "分片键怎么选？选错了会有什么后果？",
+          "score": 1.0986
+        },
+        {
+          "id": 10,
+          "stem": "分库分表之后，跨库的排序和分页怎么做？会踩什么坑？",
+          "score": 1.0155
+        },
+        {
+          "id": 14,
+          "stem": "联合索引的字段顺序该怎么排？把区分度最高的放最前面总是对的吗？",
+          "score": 0.9465
+        }
+      ],
+      "kept": [
+        2,
+        20
+      ]
+    },
+    {
+      "user_text": "事务隔离级别到底几级，幻读是什么",
+      "query": "隔离级别 幻读",
+      "sql": "SELECT id, left(stem, 40) AS stem, MATCH(keywords) AGAINST('隔离级别 幻读') AS score FROM questions WHERE MATCH(keywords) AGAINST('隔离级别 幻读') ORDER BY score DESC",
+      "top_score": 8.9868,
+      "threshold": 2.696,
+      "hits": [
+        {
+          "id": 3,
+          "stem": "MySQL 的四种事务隔离级别分别解决什么问题？默认是哪一级，为什么？",
+          "score": 8.9868
+        },
+        {
+          "id": 8,
+          "stem": "间隙锁是什么？在什么隔离级别下生效？它能完全防止幻读吗？",
+          "score": 7.3183
+        }
+      ],
+      "kept": [
+        3,
+        8
+      ]
+    },
+    {
+      "user_text": "主从延迟导致刚写的数据读不到",
+      "query": "主从复制 延迟 一致性",
+      "sql": "SELECT id, left(stem, 40) AS stem, MATCH(keywords) AGAINST('主从复制 延迟 一致性') AS score FROM questions WHERE MATCH(keywords) AGAINST('主从复制 延迟 一致性') ORDER BY score DESC",
+      "top_score": 8.452,
+      "threshold": 2.5356,
+      "hits": [
+        {
+          "id": 18,
+          "stem": "读写分离下「刚写完就读不到」怎么解决？",
+          "score": 8.452
+        },
+        {
+          "id": 9,
+          "stem": "主从复制延迟很大，会产生什么问题？怎么缓解？",
+          "score": 4.683
+        }
+      ],
+      "kept": [
+        18,
+        9
+      ]
+    },
+    {
+      "user_text": "表太大了要分库分表，分片键怎么挑",
+      "query": "分库分表 分片键",
+      "sql": "SELECT id, left(stem, 40) AS stem, MATCH(keywords) AGAINST('分库分表 分片键') AS score FROM questions WHERE MATCH(keywords) AGAINST('分库分表 分片键') ORDER BY score DESC",
+      "top_score": 10.4368,
+      "threshold": 3.131,
+      "hits": [
+        {
+          "id": 17,
+          "stem": "分片键怎么选？选错了会有什么后果？",
+          "score": 10.4368
+        },
+        {
+          "id": 10,
+          "stem": "分库分表之后，跨库的排序和分页怎么做？会踩什么坑？",
+          "score": 4.8131
+        },
+        {
+          "id": 20,
+          "stem": "索引下推（ICP）是什么？它省掉了什么开销？",
+          "score": 1.3136
+        },
+        {
+          "id": 2,
+          "stem": "什么是回表？为什么说「覆盖索引能避免回表」？",
+          "score": 1.1455
+        },
+        {
+          "id": 1,
+          "stem": "什么情况下 MySQL 的索引会失效？举出至少三种，并说明为什么会失效。",
+          "score": 1.0155
+        }
+      ],
+      "kept": [
+        17,
+        10
+      ]
+    },
+    {
+      "user_text": "应用一直报连接超时，连接数打满",
+      "query": "连接池 连接数 连接超时",
+      "sql": "SELECT id, left(stem, 40) AS stem, MATCH(keywords) AGAINST('连接池 连接数 连接超时') AS score FROM questions WHERE MATCH(keywords) AGAINST('连接池 连接数 连接超时') ORDER BY score DESC",
+      "top_score": 10.1092,
+      "threshold": 3.0327,
+      "hits": [
+        {
+          "id": 21,
+          "stem": "数据库连接被占满、应用报连接超时，从哪里开始查？",
+          "score": 10.1092
+        },
+        {
+          "id": 11,
+          "stem": "数据库连接池该配多大？连接数是不是越多越好？",
+          "score": 9.366
+        }
+      ],
+      "kept": [
+        21,
+        11
+      ]
+    },
+    {
+      "user_text": "redo log 和 binlog 有什么区别",
+      "query": "redo log binlog",
+      "sql": "SELECT id, left(stem, 40) AS stem, MATCH(keywords) AGAINST('redo log binlog') AS score FROM questions WHERE MATCH(keywords) AGAINST('redo log binlog') ORDER BY score DESC",
+      "top_score": 6.7897,
+      "threshold": 2.0369,
+      "hits": [
+        {
+          "id": 5,
+          "stem": "redo log、undo log、binlog 三者有什么区别？为什么需要两阶",
+          "score": 6.7897
+        },
+        {
+          "id": 19,
+          "stem": "崩溃恢复时 redo 和 undo 分别在做什么？为什么顺序不能反？",
+          "score": 4.381
+        },
+        {
+          "id": 16,
+          "stem": "长事务有什么危害？怎么发现和治理？",
+          "score": 1.6238
+        },
+        {
+          "id": 4,
+          "stem": "MVCC 是怎么实现的？undo log 和 read view 各自起什么作用",
+          "score": 1.4161
+        }
+      ],
+      "kept": [
+        5,
+        19
+      ]
+    },
+    {
+      "user_text": "这个 SQL 为什么要回表两次",
+      "query": "回表 索引下推",
+      "sql": "SELECT id, left(stem, 40) AS stem, MATCH(keywords) AGAINST('回表 索引下推') AS score FROM questions WHERE MATCH(keywords) AGAINST('回表 索引下推') ORDER BY score DESC",
+      "top_score": 7.9352,
+      "threshold": 2.3806,
+      "hits": [
+        {
+          "id": 20,
+          "stem": "索引下推（ICP）是什么？它省掉了什么开销？",
+          "score": 7.9352
+        },
+        {
+          "id": 2,
+          "stem": "什么是回表？为什么说「覆盖索引能避免回表」？",
+          "score": 4.6827
+        },
+        {
+          "id": 1,
+          "stem": "什么情况下 MySQL 的索引会失效？举出至少三种，并说明为什么会失效。",
+          "score": 1.8188
+        },
+        {
+          "id": 13,
+          "stem": "最左前缀原则是什么？为什么联合索引 a,b,c 用不上 WHERE b=1？",
+          "score": 1.4268
+        },
+        {
+          "id": 7,
+          "stem": "聚簇索引和二级索引的区别？为什么建议用自增主键？",
+          "score": 1.1949
+        },
+        {
+          "id": 17,
+          "stem": "分片键怎么选？选错了会有什么后果？",
+          "score": 1.0986
+        },
+        {
+          "id": 10,
+          "stem": "分库分表之后，跨库的排序和分页怎么做？会踩什么坑？",
+          "score": 1.0155
+        },
+        {
+          "id": 14,
+          "stem": "联合索引的字段顺序该怎么排？把区分度最高的放最前面总是对的吗？",
+          "score": 0.9465
+        }
+      ],
+      "kept": [
+        20,
+        2
+      ]
+    }
+  ]
+}

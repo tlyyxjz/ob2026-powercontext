@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>复盘面试官 · 专挑你答崩的那道题</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="mark">复盘</span>
+    <span class="title">面试官</span>
+  </div>
+  <div class="goal" id="goal">正在读取今日目标…</div>
+  <button type="button" class="btn primary" id="startBtn">开始</button>
+  <button type="button" class="btn ghost" id="wrongBtn" aria-expanded="false" aria-controls="wrongDrawer">
+    错题本 <span class="count" id="wrongCount">0</span>
+  </button>
+</header>
+
+<main class="stage">
+
+  <section class="card empty" id="emptyState">
+    <h1>这里会记住你答崩的题</h1>
+    <p id="emptyLead">你还没答过任何题。答完之后，它记下你漏了哪几个要点，下次专门挑同一族、说法不同的题让你重练。</p>
+    <p class="hint">点右上角「错题本」可以跳回任意一道低分题重练。</p>
+    <div class="actions">
+      <button type="button" class="btn primary" id="emptyStart">开始今天的题单</button>
+    </div>
+  </section>
+
+  <div class="busybar" id="busyBar" hidden role="status" aria-live="polite">
+    <span class="spin" aria-hidden="true"></span>
+    <span id="busyText">处理中…</span>
+  </div>
+
+  <section class="card question" id="qCard" hidden>
+    <div class="qmeta">
+      <span class="qid" id="qId">题 –</span>
+      <span class="level" id="qLevel">难度 –</span>
+      <span class="tags" id="qTags"></span>
+      <span class="score" id="qScore">未练过</span>
+    </div>
+    <h2 class="stem" id="qStem">…</h2>
+    <div class="attempts" id="qAttempts"></div>
+
+    <form id="answerForm">
+      <label for="answerBox" class="answerLabel">你的回答（说出要点即可，不用写全文）</label>
+      <textarea id="answerBox" rows="6" placeholder="例如：二级索引叶子只存索引列和主键，要别的列得回聚簇索引再查一次…"
+                autocomplete="off" spellcheck="false"></textarea>
+      <div class="actions">
+        <button type="submit" class="btn primary" id="submitBtn" disabled>交卷</button>
+        <span class="writestatus" id="writeStatus"></span>
+      </div>
+    </form>
+  </section>
+
+  <section class="card review" id="reviewCard" hidden>
+    <h3 class="revtitle">点评 <span class="engine" id="revEngine"></span></h3>
+    <p class="revnote" id="revNote" hidden></p>
+    <div class="revscore" id="revScore"></div>
+    <div class="revblock hit">
+      <h4>你答到的点</h4>
+      <ul id="hitList"></ul>
+    </div>
+    <div class="revblock miss">
+      <h4>你漏掉的点</h4>
+      <ul id="missList"></ul>
+    </div>
+    <div class="revblock advice">
+      <h4>一句话建议</h4>
+      <p id="adviceText"></p>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn primary" id="nextBtn">下一题</button>
+      <button type="button" class="btn ghost" id="retryBtn">再答一次</button>
+    </div>
+  </section>
+
+  <p class="errorbar" id="errorBar" hidden role="alert"></p>
+</main>
+
+<aside class="drawer" id="wrongDrawer" aria-label="错题本" hidden>
+  <div class="drawerHead">
+    <h3>错题本</h3>
+    <button type="button" class="btn ghost" id="drawerClose" aria-label="关闭错题本">×</button>
+  </div>
+  <p class="drawerHint">最新一次得分低于 <span id="wrongMax">60</span> 分的题</p>
+  <ul class="wrongList" id="wrongList"></ul>
+</aside>
+
+<footer class="statusbar" id="statusbar">
+  <span class="dot" id="dbDot"></span>
+  <span id="dbText">seekdb 连接中…</span>
+  <span class="llmChip" id="llmChip">点评引擎检测中…</span>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

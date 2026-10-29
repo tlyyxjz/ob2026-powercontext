@@ -1,0 +1,8 @@
+# seekdb 库目录：实测 5 行数据就占 ~330 MB，绝对不能进仓库
+.data/
+*.db/
+seekdb.db/
+
+# Python
+__pycache__/
+*.py[cod]

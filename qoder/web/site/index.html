@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>复盘面试官 · 把崩过的那道题，再问你一遍</title>
+<meta name="description" content="本地运行的数据库面试复盘工具：答崩的那道题由 seekdb 中文全文检索找同类题重练。项目介绍与真实检索记录回放。">
+<link rel="stylesheet" href="./site.css">
+</head>
+<body>
+
+<header class="nav">
+  <span class="mark">复盘</span>
+  <span class="navTitle">面试官</span>
+  <nav class="navLinks">
+    <a href="#how">seekdb 用在哪</a>
+    <a href="#replay">检索记录回放</a>
+    <a href="#run">本地跑起来</a>
+  </nav>
+</header>
+
+<main>
+
+<section class="hero">
+  <h1>把崩过的那道题，<br>再问你一遍。</h1>
+  <p class="lead">
+    刷题软件只记「对没对」。它记的是<b>你这次漏了哪几个要点</b>，
+    然后从题库里挑出<b>同一族、换了说法</b>的题让你重练 ——
+    「找同类题」这一步是本地 <b>seekdb</b> 的中文全文检索在干活，没有它就只能随机出题。
+  </p>
+  <p class="meta">
+    Python 标准库 + <code>pylibseekdb</code>（seekdb 嵌入式）+ 原生 HTML/CSS/JS。
+    无构建工具、无 npm、无 CDN，数据全落在本地一个目录里，不上传任何服务器。
+  </p>
+  <figure class="shot">
+    <img src="./shot-product.png" alt="产品主界面截图：题号、难度、当前得分、题干、回答框与交卷按钮" width="1280" height="820">
+    <figcaption>产品主界面（本机实际跑出来的界面，非设计稿）</figcaption>
+  </figure>
+</section>
+
+<section class="block" id="problem">
+  <h2>解决什么问题</h2>
+  <ul class="points">
+    <li><b>痛点</b>：答完就翻篇，下次换个问法还是崩在同一个点上。没人告诉你「你这次又漏了代价那一句」。</li>
+    <li><b>做法</b>：每次作答都记进本地库，标注答到了哪几个参考要点、漏了哪几个；下一题优先出「同族但你没练过」的。</li>
+    <li><b>为什么必须用数据库</b>：「同族」不是标签相等，是中文术语的相似度。要同时做中文全文匹配和结构化过滤（按得分、按最近练习时间排题单），这正是 seekdb 在这里的位置。</li>
+  </ul>
+  <p class="note">使用效果：暂无真实用户数据（本项目在比赛周期内完成，未做过用户投放）。</p>
+</section>
+
+<section class="block" id="how">
+  <h2>seekdb 用在哪</h2>
+  <p class="sub">三步里中间那步和第三步是数据库在干活，不是应用层字符串比较。</p>
+
+  <div class="flow">
+    <div class="step">
+      <span class="stepNo">1</span>
+      <h3>你交卷</h3>
+      <p>把原话和当前题目一起提交，不打分、不自愈，先存下来。</p>
+      <code class="chip local">浏览器 → 本地 http.server</code>
+    </div>
+    <span class="arrow" aria-hidden="true">→</span>
+    <div class="step db">
+      <span class="stepNo">2</span>
+      <h3>写进 seekdb</h3>
+      <p>逐条比对你说的话和该题的参考要点，算出得分，连同原话写进 <code>answer_log</code>。写成功才许进入点评。</p>
+      <code class="chip dbchip">seekdb · ref_point / answer_log</code>
+    </div>
+    <span class="arrow" aria-hidden="true">→</span>
+    <div class="step db">
+      <span class="stepNo">3</span>
+      <h3>下次检索同类题</h3>
+      <p>用这道题的术语串做中文全文匹配，召回同族题，按相对阈值剪掉噪声，再排「你还没练过的」。</p>
+      <code class="chip dbchip">seekdb · MATCH(keywords) AGAINST(…)</code>
+    </div>
+  </div>
+
+  <div class="tables">
+    <h3>库里就三张表</h3>
+    <div class="tableRow">
+      <code>questions</code>
+      <span>21 道题库。<code>keywords</code> 列建 <code>FULLTEXT INDEX … WITH PARSER ik</code>（中文分词）</span>
+    </div>
+    <div class="tableRow">
+      <code>ref_point</code>
+      <span>85 条参考答案要点，一题多行。<code>content</code> 列同样带 ik 全文索引</span>
+    </div>
+    <div class="tableRow">
+      <code>answer_log</code>
+      <span>作答历史，复合主键 <code>(question_id, attempt_no)</code>，同一题重答不长重复行</span>
+    </div>
+  </div>
+
+  <div class="caveat">
+    <h3>一个不好看的实话</h3>
+    <p>
+      seekdb 的 ik 词库里没有「回表」这类技术词，会把它切成单字「表」，
+      于是搜「回表」会连带召回「分库分<b>表</b>」的题。
+      本项目不假装这个问题不存在：召回后按 <code>score &gt;= top × 0.3</code> 剪枝，
+      0.3 是拿 21 道题逐题跑出来定的。下面每条记录都能看到这条阈值在剪什么。
+    </p>
+  </div>
+</section>
+
+<section class="block" id="replay">
+  <h2>检索记录回放</h2>
+  <p class="banner">以下数据由本地 seekdb 实际执行后导出，不是前端模拟。</p>
+  <dl class="facts">
+    <div><dt>引擎</dt><dd id="factEngine">—</dd></div>
+    <div><dt>语料</dt><dd id="factCorpus">—</dd></div>
+    <div><dt>剪枝阈值</dt><dd id="factRatio">—</dd></div>
+    <div><dt>记录条数</dt><dd id="factCases">—</dd></div>
+  </dl>
+  <div id="cases" class="cases">
+    <p class="empty">没读到 <code>queries.js</code>：这个文件要和页面同目录，内联了导出记录，<code>file://</code> 直接打开也能显示。</p>
+  </div>
+</section>
+
+<section class="block" id="run">
+  <h2>怎么在本地跑起来</h2>
+  <p class="sub">五条命令，从零到能打开页面。不需要 Docker，也不需要任何模型 API（配了 Key 点评会更有针对性）。</p>
+  <pre class="run"><code># 1. 建虚拟环境
+python -m venv .venv
+
+# 2. 激活（Windows Git Bash；PowerShell / CMD 用对应脚本）
+source .venv/Scripts/activate
+
+# 3. 装依赖（两个包，总下载约 66 MB）
+pip install pylibseekdb==1.4.0.post2 pymysql==2.2.8
+
+# 4. 初始化数据库：建库、建表、导入题库（幂等，可以反复执行）
+python db/init.py
+
+# 5. 启动服务
+python server/app.py</code></pre>
+  <p class="meta">
+    然后浏览器打开 <code>http://127.0.0.1:8765</code>（这是本机命令行示例里的回环地址，站点不连接它）。
+    要求 Python 3.11+；首次初始化后库目录约 330 MB（seekdb 自带可执行文件与预分配 redo log），
+    磁盘紧的先看一眼。<code>.data/</code> 已被 <code>.gitignore</code> 排除，不进仓库。
+  </p>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="footCol">
+    <h3>代码仓库</h3>
+    <a href="https://github.com/tlyyxjz/ob2026-powercontext" rel="noopener">github.com/tlyyxjz/ob2026-powercontext</a>
+    <p class="meta">目录 <code>qoder/</code>，分支 <code>2026-competition-ecosystem</code></p>
+  </div>
+  <div class="footCol">
+    <h3>开发与提交</h3>
+    <p class="meta">Qoder 账号 UID：<code>019fd088-8e20-78d5-9ec5-587d476c50b2</code></p>
+    <p class="meta">许可证：Apache-2.0</p>
+    <p class="meta">第三方组件：seekdb / <code>pylibseekdb</code>（OceanBase 开源，Apache-2.0）、<code>pymysql</code>（MIT）</p>
+  </div>
+  <div class="footCol">
+    <h3>关于这个页面</h3>
+    <p class="meta">纯静态：<code>index.html</code> + <code>site.css</code> + <code>site.js</code> + <code>queries.js</code>，无构建工具、无 CDN。</p>
+    <p class="meta">页内截图与检索记录均来自本机实际运行；不含任何密钥或内网地址。</p>
+  </div>
+</footer>
+
+<script src="./queries.js"></script>
+<script src="./site.js"></script>
+</body>
+</html>
